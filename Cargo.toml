@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 fastanvil = "0.31.0"
 fastnbt = "2.5.0"
+flate2 = "1.0.35"

@@ -1,12 +1,13 @@
 use core::str;
-use std::{fs::File, io::{BufRead, BufReader, Read, Seek, SeekFrom}, path::Path};
+use std::{fs::File, io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom}, path::Path};
 
 use fastanvil::{Chunk, CurrentJavaChunk, Region};
+use flate2::read::ZlibDecoder;
 
 pub trait DataHeader : Sized {
     fn header_size() -> u32;
-    fn read(reader : &mut BufReader<File>) -> Result<Self, std::io::Error>;
-    fn skip_data(&self, reader : &mut BufReader<File>) -> std::io::Result<()>;
+    fn read(reader : &mut (impl Read + Seek)) -> Result<Self, std::io::Error>;
+    fn skip_data(&self, reader : &mut (impl Read + Seek)) -> std::io::Result<()>;
 }
 
 #[derive(Debug)]
@@ -26,7 +27,7 @@ impl DataHeader for RecordHeader {
         24
     }
 
-    fn read(reader : &mut BufReader<File>) -> Result<Self, std::io::Error> {
+    fn read(reader : &mut (impl Read + Seek)) -> Result<Self, std::io::Error> {
         let mut buf : [u8; 4] = [0; 4];
         let mut buf16 : [u8; 2] = [0; 2];
 
@@ -74,7 +75,7 @@ impl DataHeader for RecordHeader {
         })
     }
 
-    fn skip_data(&self, reader : &mut BufReader<File>) -> std::io::Result<()> {
+    fn skip_data(&self, reader : &mut (impl Read + Seek)) -> std::io::Result<()> {
         reader.seek_relative(self.data_size.into())
     }
 }
@@ -95,7 +96,7 @@ impl DataHeader for GroupHeader {
         24
     }
 
-    fn read(reader : &mut BufReader<File>) -> Result<Self, std::io::Error> {
+    fn read(reader : &mut (impl Read + Seek)) -> Result<Self, std::io::Error> {
         let mut buf : [u8; 4] = [0; 4];
         let mut buf16 : [u8; 2] = [0; 2];
 
@@ -138,7 +139,7 @@ impl DataHeader for GroupHeader {
         })
     }
 
-    fn skip_data(&self, reader : &mut BufReader<File>) -> std::io::Result<()> {
+    fn skip_data(&self, reader : &mut (impl Read + Seek)) -> std::io::Result<()> {
         reader.seek_relative((self.total_size - GroupHeader::header_size()).into())
     }
 }
@@ -154,7 +155,7 @@ impl DataHeader for FieldHeader {
         6
     }
 
-    fn read(reader : &mut BufReader<File>) -> Result<Self, std::io::Error> {
+    fn read(reader : &mut (impl Read + Seek)) -> Result<Self, std::io::Error> {
         let mut buf : [u8; 4] = [0; 4];
         let mut buf16 : [u8; 2] = [0; 2];
 
@@ -172,13 +173,9 @@ impl DataHeader for FieldHeader {
         })
     }
 
-    fn skip_data(&self, reader : &mut BufReader<File>) -> std::io::Result<()> {
+    fn skip_data(&self, reader : &mut (impl Read + Seek)) -> std::io::Result<()> {
         reader.seek_relative(self.size.into())
     }
-}
-
-pub struct Group {
-
 }
 
 fn grab_world_children(buf_reader : &mut BufReader<File>) -> Result<GroupHeader, std::io::Error> {
@@ -219,15 +216,102 @@ fn grab_world_children(buf_reader : &mut BufReader<File>) -> Result<GroupHeader,
     Ok(group)
 }
 
+fn read_cell_refs(x : i32, y : i32, reader : &mut (impl Read + Seek)) -> std::io::Result<()> {
+    let cell_child_grp = GroupHeader::read(reader)?;
+    assert_eq!(cell_child_grp.ty, "GRUP");
+
+    // Now we find the temporary children group (where LAND is always stored)
+
+    let mut temp_child = GroupHeader::read(reader)?;
+    if temp_child.group_ty != 9 {
+        println!("{:?}", temp_child);
+        temp_child.skip_data(reader)?;
+
+        temp_child = GroupHeader::read(reader)?;
+    }
+    
+    assert_eq!(temp_child.ty, "GRUP");
+
+    let mut left_to_read = temp_child.total_size - GroupHeader::header_size();
+
+    while left_to_read > 0 {
+        let field_header = FieldHeader::read(reader)?;
+        println!("{:?}", field_header);
+
+        if field_header.ty == "LAND" {
+            
+        }
+        
+        left_to_read -= (field_header.size as u32) + FieldHeader::header_size();
+    }
+    Ok(())
+}
+
+fn read_cell(cell : RecordHeader, reader : &mut (impl Read + Seek)) -> std::io::Result<()> {
+    // Assume the cell is encrypted:
+    let mut buf : [u8; 4] = [0; 4];
+    reader.read_exact(&mut buf)?;
+    let decrypted_size = u32::from_le_bytes(buf);
+
+    let x : i32;
+    let y : i32;
+
+    // Subtract the 4 bytes we just read:
+    let compressed_chunk = reader.take((cell.data_size as u64) - (4 as u64));
+
+    let mut out_cell = Vec::with_capacity(decrypted_size.try_into().unwrap());
+
+    ZlibDecoder::new(compressed_chunk).read_to_end(&mut out_cell)?;
+
+    let mut cell_cursor = Cursor::new(out_cell);
+
+    loop {
+        let field = FieldHeader::read(&mut cell_cursor)?;
+        // Cell location:
+        if field.ty == "XCLC" {
+            let mut buf : [u8; 4] = [0; 4];
+
+            cell_cursor.read_exact(&mut buf)?;
+            x = i32::from_le_bytes(buf);
+
+            cell_cursor.read_exact(&mut buf)?;
+            y = i32::from_le_bytes(buf);
+            break;
+        } else {
+            field.skip_data(&mut cell_cursor)?;
+            continue;
+        }
+    }
+    read_cell_refs(x, y, reader)?;
+    
+    Ok(())
+}
+
 fn main() {
     let skyrim = File::open("Skyrim.esm").unwrap();
 
     let mut buf_reader = BufReader::new(skyrim);
 
-    let group = grab_world_children(&mut buf_reader);
-    
-    println!("{:?}", group);
+    let _world_group = grab_world_children(&mut buf_reader).unwrap();
 
+    // Read the first cell and its children:
+    let first_world_cell = RecordHeader::read(&mut buf_reader).unwrap();
+    read_cell(first_world_cell, &mut buf_reader).unwrap();
+
+    // loop {
+    //     let _block = GroupHeader::read(&mut buf_reader).unwrap();
+    //     println!("{:?}", _block);
+
+    //     loop {
+    //         let subblock = GroupHeader::read(&mut buf_reader).unwrap();
+
+    //         let cell = RecordHeader::read(&mut buf_reader).unwrap();
+    //         let (x, y) = read_cell(cell, &mut buf_reader).unwrap();
+    //         println!("{x} {y}");
+    //         break;
+    //     }
+    //     break;
+    // }
 
     // println!("{:?}", chunk.block(0, -1023, 0));
 }
