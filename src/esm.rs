@@ -144,7 +144,7 @@ impl DataHeader for GroupHeader {
 }
 
 #[derive(Debug)]
-pub struct FieldHeader {
+struct FieldHeader {
     pub ty : String,
     pub size : u16
 }
@@ -177,7 +177,74 @@ impl DataHeader for FieldHeader {
     }
 }
 
-fn read_cell_refs(x : i32, y : i32, reader : &mut (impl Read + Seek)) -> std::io::Result<()> {
+#[derive(Debug)]
+struct Land {
+	offset_height : f32,
+	height_gradient : Vec<u8>,
+}
+
+struct Cell {
+	x : i32,
+	y : i32
+}
+
+fn read_land(cell : Cell, land : RecordHeader, reader : &mut (impl Read + Seek)) -> std::io::Result<()> {
+	let mut buf : [u8; 4] = [0; 4];
+
+    reader.read_exact(&mut buf)?;
+    let decrypted_size = u32::from_le_bytes(buf);
+
+    // Subtract the 4 bytes we just read:
+    let compressed_chunk = reader.take((land.data_size as u64) - (4 as u64));
+
+    let mut out_land = Vec::with_capacity(decrypted_size.try_into().unwrap());
+
+    ZlibDecoder::new(compressed_chunk).read_to_end(&mut out_land)?;
+
+    let mut land_cursor = Cursor::new(out_land);
+
+	let mut left_to_read = decrypted_size;
+
+	while left_to_read > 0 {
+		let field = FieldHeader::read(&mut land_cursor)?;
+
+		if field.ty == "VHGT" {
+			land_cursor.read_exact(&mut buf)?;
+
+			// Based on https://en.uesp.net/wiki/Skyrim_Mod:Mod_File_Format/LAND
+			let offset_height = f32::from_le_bytes(buf);
+
+			let mut height_gradient = Vec::with_capacity(1089);
+
+			let mut byte : [u8; 1] = [0; 1];
+
+			for i in 0..1089 {
+				land_cursor.read_exact(&mut byte)?;
+
+				let height_byte = u8::from_le_bytes(byte);
+
+				height_gradient.push(height_byte);
+			}
+
+			let l = Land {
+				offset_height,
+				height_gradient
+			};
+
+			println!("{l:?}");
+			
+			break;
+		} else {
+			field.skip_data(&mut land_cursor)?;
+		}
+
+		left_to_read -= field.size as u32 + FieldHeader::header_size();
+	}
+
+	Ok(())
+}
+
+fn read_cell_refs(cell : Cell, reader : &mut (impl Read + Seek)) -> std::io::Result<()> {
     let cell_child_grp = GroupHeader::read(reader)?;
     assert_eq!(cell_child_grp.ty, "GRUP");
 
@@ -198,8 +265,8 @@ fn read_cell_refs(x : i32, y : i32, reader : &mut (impl Read + Seek)) -> std::io
         let record_header = RecordHeader::read(reader)?;
 
         if record_header.ty == "LAND" {
+			read_land(cell, record_header, reader).unwrap();
             reader.seek_relative(left_to_read as i64)?;
-            println!("{:?}", record_header);
             break;
         }
 
@@ -243,7 +310,7 @@ fn read_cell(cell : RecordHeader, reader : &mut (impl Read + Seek)) -> std::io::
             continue;
         }
     }
-    read_cell_refs(x, y, reader)?;
+    read_cell_refs(Cell {x, y}, reader)?;
     
     Ok(())
 }
