@@ -3,7 +3,7 @@
 version = 3
 
 [[package]]
-name = "SkyrimReader"
+name = "Skyrim2Minecraft"
 version = "0.1.0"
 dependencies = [
  "fastanvil",
