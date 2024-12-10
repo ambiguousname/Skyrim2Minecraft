@@ -234,15 +234,15 @@ fn read_cell_refs(x : i32, y : i32, reader : &mut (impl Read + Seek)) -> std::io
     let mut left_to_read = temp_child.total_size - GroupHeader::header_size();
 
     while left_to_read > 0 {
-        let field_header = FieldHeader::read(reader)?;
+        let record_header = RecordHeader::read(reader)?;
 
-        if field_header.ty == "LAND" {
+        if record_header.ty == "LAND" {
             reader.seek_relative(left_to_read as i64)?;
-            println!("{:?}", field_header);
+            println!("{:?}", record_header);
             break;
         }
 
-        left_to_read -= (field_header.size as u32) + FieldHeader::header_size();
+        left_to_read -= (record_header.data_size as u32) + RecordHeader::header_size();
     }
     Ok(())
 }
