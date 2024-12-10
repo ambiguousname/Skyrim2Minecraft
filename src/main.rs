@@ -224,7 +224,6 @@ fn read_cell_refs(x : i32, y : i32, reader : &mut (impl Read + Seek)) -> std::io
 
     let mut temp_child = GroupHeader::read(reader)?;
     if temp_child.group_ty != 9 {
-        println!("{:?}", temp_child);
         temp_child.skip_data(reader)?;
 
         temp_child = GroupHeader::read(reader)?;
@@ -236,12 +235,13 @@ fn read_cell_refs(x : i32, y : i32, reader : &mut (impl Read + Seek)) -> std::io
 
     while left_to_read > 0 {
         let field_header = FieldHeader::read(reader)?;
-        println!("{:?}", field_header);
 
         if field_header.ty == "LAND" {
-            
+            reader.seek_relative(left_to_read as i64)?;
+            println!("{:?}", field_header);
+            break;
         }
-        
+
         left_to_read -= (field_header.size as u32) + FieldHeader::header_size();
     }
     Ok(())
@@ -298,20 +298,17 @@ fn main() {
     let first_world_cell = RecordHeader::read(&mut buf_reader).unwrap();
     read_cell(first_world_cell, &mut buf_reader).unwrap();
 
-    // loop {
-    //     let _block = GroupHeader::read(&mut buf_reader).unwrap();
-    //     println!("{:?}", _block);
+    loop {
+        let _block = GroupHeader::read(&mut buf_reader).unwrap();
+        loop {
+            let _subblock = GroupHeader::read(&mut buf_reader).unwrap();
 
-    //     loop {
-    //         let subblock = GroupHeader::read(&mut buf_reader).unwrap();
-
-    //         let cell = RecordHeader::read(&mut buf_reader).unwrap();
-    //         let (x, y) = read_cell(cell, &mut buf_reader).unwrap();
-    //         println!("{x} {y}");
-    //         break;
-    //     }
-    //     break;
-    // }
+            let cell = RecordHeader::read(&mut buf_reader).unwrap();
+            read_cell(cell, &mut buf_reader).unwrap();
+            break;
+        }
+        break;
+    }
 
     // println!("{:?}", chunk.block(0, -1023, 0));
 }
