@@ -177,44 +177,6 @@ impl DataHeader for FieldHeader {
     }
 }
 
-fn grab_world_children(buf_reader : &mut BufReader<File>) -> Result<GroupHeader, std::io::Error> {
-    let tes4 = RecordHeader::read(buf_reader)?;
-
-    assert_eq!(tes4.ty, "TES4");
-
-    buf_reader.seek(SeekFrom::Current(tes4.data_size.into()))?;
-
-    let mut group : GroupHeader;
-
-    loop {
-        group = GroupHeader::read(buf_reader)?;
-        let label = str::from_utf8(&group.label).unwrap();
-        if label == "WRLD" {
-            break;
-        }
-        group.skip_data(buf_reader)?;
-    }
-    
-    let world_record = RecordHeader::read(buf_reader)?;
-
-    assert_eq!(world_record.ty, "WRLD");
-
-    // We know this is EDID
-    let edid = FieldHeader::read(buf_reader)?;
-
-    let mut world_string_buf : Vec<u8> = Vec::new();
-    buf_reader.read_until(b'\0', &mut world_string_buf)?;
-    let world_string = String::from_utf8(world_string_buf).unwrap();
-    assert_eq!(world_string, String::from("Tamriel\0"));
-
-    buf_reader.seek_relative((world_record.data_size - u32::from(edid.size) - FieldHeader::header_size()).into())?;
-
-    // World Children group:
-    let group = GroupHeader::read(buf_reader)?;
-
-    Ok(group)
-}
-
 fn read_cell_refs(x : i32, y : i32, reader : &mut (impl Read + Seek)) -> std::io::Result<()> {
     let cell_child_grp = GroupHeader::read(reader)?;
     assert_eq!(cell_child_grp.ty, "GRUP");
@@ -284,6 +246,44 @@ fn read_cell(cell : RecordHeader, reader : &mut (impl Read + Seek)) -> std::io::
     read_cell_refs(x, y, reader)?;
     
     Ok(())
+}
+
+fn grab_world_children(buf_reader : &mut BufReader<File>) -> Result<GroupHeader, std::io::Error> {
+    let tes4 = RecordHeader::read(buf_reader)?;
+
+    assert_eq!(tes4.ty, "TES4");
+
+    buf_reader.seek(SeekFrom::Current(tes4.data_size.into()))?;
+
+    let mut group : GroupHeader;
+
+    loop {
+        group = GroupHeader::read(buf_reader)?;
+        let label = str::from_utf8(&group.label).unwrap();
+        if label == "WRLD" {
+            break;
+        }
+        group.skip_data(buf_reader)?;
+    }
+    
+    let world_record = RecordHeader::read(buf_reader)?;
+
+    assert_eq!(world_record.ty, "WRLD");
+
+    // We know this is EDID
+    let edid = FieldHeader::read(buf_reader)?;
+
+    let mut world_string_buf : Vec<u8> = Vec::new();
+    buf_reader.read_until(b'\0', &mut world_string_buf)?;
+    let world_string = String::from_utf8(world_string_buf).unwrap();
+    assert_eq!(world_string, String::from("Tamriel\0"));
+
+    buf_reader.seek_relative((world_record.data_size - u32::from(edid.size) - FieldHeader::header_size()).into())?;
+
+    // World Children group:
+    let group = GroupHeader::read(buf_reader)?;
+
+    Ok(group)
 }
 
 pub fn read_skyrim(reader : &mut BufReader<File>) -> std::io::Result<()> {
