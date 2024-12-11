@@ -188,7 +188,7 @@ struct Cell {
 	y : i32
 }
 
-fn read_land(cell : Cell, land : RecordHeader, reader : &mut (impl Read + Seek)) -> std::io::Result<()> {
+fn read_land(cell : &Cell, land : &RecordHeader, reader : &mut (impl Read + Seek)) -> std::io::Result<()> {
 	let mut buf : [u8; 4] = [0; 4];
 
     reader.read_exact(&mut buf)?;
@@ -231,7 +231,7 @@ fn read_land(cell : Cell, land : RecordHeader, reader : &mut (impl Read + Seek))
 				height_gradient
 			};
 
-			println!("{l:?}");
+			println!("{:?}", l.offset_height);
 			
 			break;
 		} else {
@@ -244,7 +244,8 @@ fn read_land(cell : Cell, land : RecordHeader, reader : &mut (impl Read + Seek))
 	Ok(())
 }
 
-fn read_cell_refs(cell : Cell, reader : &mut (impl Read + Seek)) -> std::io::Result<()> {
+/// Returns bytes read.
+fn read_cell_refs(cell : Cell, reader : &mut (impl Read + Seek)) -> std::io::Result<u32> {
     let cell_child_grp = GroupHeader::read(reader)?;
     assert_eq!(cell_child_grp.ty, "GRUP");
 
@@ -263,19 +264,21 @@ fn read_cell_refs(cell : Cell, reader : &mut (impl Read + Seek)) -> std::io::Res
 
     while left_to_read > 0 {
         let record_header = RecordHeader::read(reader)?;
+        println!("{:?} {:?}", record_header, reader.stream_position());
 
         if record_header.ty == "LAND" {
-			read_land(cell, record_header, reader).unwrap();
-            reader.seek_relative(left_to_read as i64)?;
-            break;
+			read_land(&cell, &record_header, reader)?;
+        } else {
+            record_header.skip_data(reader)?;
         }
 
         left_to_read -= (record_header.data_size as u32) + RecordHeader::header_size();
     }
-    Ok(())
+    Ok(cell_child_grp.total_size)
 }
 
-fn read_cell(cell : RecordHeader, reader : &mut (impl Read + Seek)) -> std::io::Result<()> {
+/// Returns bytes read.
+fn read_cell(cell : RecordHeader, reader : &mut (impl Read + Seek)) -> std::io::Result<u32> {
     // Assume the cell is encrypted:
     let mut buf : [u8; 4] = [0; 4];
     reader.read_exact(&mut buf)?;
@@ -310,9 +313,9 @@ fn read_cell(cell : RecordHeader, reader : &mut (impl Read + Seek)) -> std::io::
             continue;
         }
     }
-    read_cell_refs(Cell {x, y}, reader)?;
+    let total_read = read_cell_refs(Cell {x, y}, reader)? + cell.data_size + RecordHeader::header_size();
     
-    Ok(())
+    Ok(total_read)
 }
 
 fn grab_world_children(buf_reader : &mut BufReader<File>) -> Result<GroupHeader, std::io::Error> {
@@ -354,22 +357,34 @@ fn grab_world_children(buf_reader : &mut BufReader<File>) -> Result<GroupHeader,
 }
 
 pub fn read_skyrim(reader : &mut BufReader<File>) -> std::io::Result<()> {
-	let _world_group = grab_world_children(reader)?;
+	let world_group = grab_world_children(reader)?;
 
     // Read the first cell and its children:
     let first_world_cell = RecordHeader::read(reader)?;
     read_cell(first_world_cell, reader)?;
 
-    loop {
-        let _block = GroupHeader::read(reader)?;
-        loop {
-            let _subblock = GroupHeader::read(reader)?;
+    let mut world_bytes_left = world_group.total_size - GroupHeader::header_size();
 
-            let cell = RecordHeader::read(reader)?;
-            read_cell(cell, reader)?;
-            break;
+    while world_bytes_left > 0 {
+        let block = GroupHeader::read(reader)?;
+
+        let mut block_left_to_read = block.total_size - GroupHeader::header_size();
+        
+        while block_left_to_read > 0 {
+            let subblock = GroupHeader::read(reader)?;
+
+            let mut subblock_left_to_read = subblock.total_size - GroupHeader::header_size();
+
+            while subblock_left_to_read > 0 {
+                let cell = RecordHeader::read(reader)?;
+                
+                subblock_left_to_read -= read_cell(cell, reader)?;
+            }
+
+            block_left_to_read -= subblock.total_size;
         }
-        break;
+
+        world_bytes_left -= block.total_size;
     }
 
 	Ok(())
