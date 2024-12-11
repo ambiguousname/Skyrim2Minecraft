@@ -3,6 +3,8 @@ use std::{fs::File, io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom}};
 
 use flate2::read::ZlibDecoder;
 
+use crate::world_gen::parse_land;
+
 pub trait DataHeader : Sized {
     fn header_size() -> u32;
     fn read(reader : &mut (impl Read + Seek)) -> Result<Self, std::io::Error>;
@@ -176,19 +178,20 @@ impl DataHeader for FieldHeader {
         reader.seek_relative(self.size.into())
     }
 }
+#[derive(Clone, Debug)]
+pub struct Cell {
+	pub x : i32,
+	pub y : i32
+}
 
 #[derive(Debug)]
-struct Land {
-	offset_height : f32,
-	height_gradient : Vec<u8>,
+pub struct Land {
+    pub cell : Cell,
+	pub offset_height : f32,
+	pub height_gradient : Vec<u8>,
 }
 
-struct Cell {
-	x : i32,
-	y : i32
-}
-
-fn read_land(cell : &Cell, land : &RecordHeader, reader : &mut (impl Read + Seek)) -> std::io::Result<()> {
+fn read_land(cell : Cell, land : &RecordHeader, reader : &mut (impl Read + Seek)) -> std::io::Result<()> {
 	let mut buf : [u8; 4] = [0; 4];
 
     reader.read_exact(&mut buf)?;
@@ -218,7 +221,7 @@ fn read_land(cell : &Cell, land : &RecordHeader, reader : &mut (impl Read + Seek
 
 			let mut byte : [u8; 1] = [0; 1];
 
-			for i in 0..1089 {
+			for _ in 0..1089 {
 				land_cursor.read_exact(&mut byte)?;
 
 				let height_byte = u8::from_le_bytes(byte);
@@ -226,13 +229,11 @@ fn read_land(cell : &Cell, land : &RecordHeader, reader : &mut (impl Read + Seek
 				height_gradient.push(height_byte);
 			}
 
-			let l = Land {
-				offset_height,
-				height_gradient
-			};
-
-			println!("{} {} {:?}", cell.x, cell.y, l.offset_height);
-			
+            parse_land(Land {
+                cell,
+                offset_height,
+                height_gradient
+            });
 			break;
 		} else {
 			field.skip_data(&mut land_cursor)?;
@@ -265,7 +266,7 @@ fn read_cell_refs(cell : Cell, reader : &mut (impl Read + Seek)) -> std::io::Res
     while left_to_read > 0 {
         let record_header = RecordHeader::read(reader)?;
         if record_header.ty == "LAND" {
-			read_land(&cell, &record_header, reader)?;
+			read_land(cell.clone(), &record_header, reader)?;
         } else {
             record_header.skip_data(reader)?;
         }

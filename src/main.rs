@@ -1,8 +1,7 @@
 use std::{fs::File, io::BufReader};
 
-use fastanvil;
-
 mod esm;
+mod world_gen;
 
 fn main() {
     let skyrim = File::open("Skyrim.esm").unwrap();
