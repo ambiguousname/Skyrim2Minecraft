@@ -91,10 +91,14 @@ impl Default for Chunk {
 					y: (MIN_Y >> 4) as i8,
 					block_states: BlockState {
 						palette: vec![Block{
-							name: "minecraft:dirt".into(),
+							name: "minecraft:bedrock".into(),
 							properties: HashMap::new()
-						}, Block { name: "minecraft:bedrock".into(), properties: HashMap::new() }, Block { name: "minecraft:air".into(), properties: HashMap::new() }, Block { name: "minecraft:stone".into(), properties: HashMap::new() }, Block { name: "minecraft:redstone".into(), properties: HashMap::new() }, Block { name: "minecraft:diamond_block".into(), properties: HashMap::new() }, Block { name: "minecraft:gold_block".into(), properties: HashMap::new() }, Block { name: "minecraft:water".into(), properties: HashMap::new() }, Block { name: "minecraft:acacia_button".into(), properties: HashMap::new() }, Block { name: "minecraft:andesite".into(), properties: HashMap::new() }, Block { name: "minecraft:grass_block".into(), properties: HashMap::new() }, Block { name: "minecraft:coarse_dirt".into(), properties: HashMap::new() }, Block { name: "minecraft:podzol".into(), properties: HashMap::new() }, Block { name: "minecraft:cobblestone".into(), properties: HashMap::new() }, Block { name: "minecraft:oak_sapling".into(), properties: HashMap::new() }, Block { name: "minecraft:oak_planks".into(), properties: HashMap::new() }, Block { name: "minecraft:sand".into(), properties: HashMap::new() }, Block { name: "minecraft:gold_ore".into(), properties: HashMap::new() }],
-						data: Some(vec![5 ; 256])
+						},
+						Block { 
+							name: "minecraft:air".into(),
+							properties: HashMap::new() 
+						}],
+						data: Some(vec![0 ; 256])
 					},
 					biomes: Biomes {
 						palette: vec!["minecraft:plains".into()],
