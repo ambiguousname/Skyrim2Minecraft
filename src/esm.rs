@@ -189,6 +189,7 @@ struct Cell {
 }
 
 fn read_land(cell : &Cell, land : &RecordHeader, reader : &mut (impl Read + Seek)) -> std::io::Result<()> {
+    println!("{:?}", land);
 	let mut buf : [u8; 4] = [0; 4];
 
     reader.read_exact(&mut buf)?;
@@ -278,6 +279,7 @@ fn read_cell_refs(cell : Cell, reader : &mut (impl Read + Seek)) -> std::io::Res
 /// Returns bytes read.
 fn read_cell(cell : RecordHeader, reader : &mut (impl Read + Seek)) -> std::io::Result<u32> {
     // Assume the cell is encrypted:
+    // TODO: What if it's not?
     let mut buf : [u8; 4] = [0; 4];
     reader.read_exact(&mut buf)?;
     let decrypted_size = u32::from_le_bytes(buf);
