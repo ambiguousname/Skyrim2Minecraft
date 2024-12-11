@@ -231,7 +231,7 @@ fn read_land(cell : &Cell, land : &RecordHeader, reader : &mut (impl Read + Seek
 				height_gradient
 			};
 
-			println!("{:?}", l.offset_height);
+			println!("{} {} {:?}", cell.x, cell.y, l.offset_height);
 			
 			break;
 		} else {
@@ -264,8 +264,6 @@ fn read_cell_refs(cell : Cell, reader : &mut (impl Read + Seek)) -> std::io::Res
 
     while left_to_read > 0 {
         let record_header = RecordHeader::read(reader)?;
-        println!("{:?} {:?}", record_header, reader.stream_position());
-
         if record_header.ty == "LAND" {
 			read_land(&cell, &record_header, reader)?;
         } else {
