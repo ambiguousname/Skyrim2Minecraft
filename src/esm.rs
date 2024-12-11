@@ -189,7 +189,6 @@ struct Cell {
 }
 
 fn read_land(cell : &Cell, land : &RecordHeader, reader : &mut (impl Read + Seek)) -> std::io::Result<()> {
-    println!("{:?}", land);
 	let mut buf : [u8; 4] = [0; 4];
 
     reader.read_exact(&mut buf)?;
@@ -278,38 +277,48 @@ fn read_cell_refs(cell : Cell, reader : &mut (impl Read + Seek)) -> std::io::Res
 
 /// Returns bytes read.
 fn read_cell(cell : RecordHeader, reader : &mut (impl Read + Seek)) -> std::io::Result<u32> {
-    // Assume the cell is encrypted:
-    // TODO: What if it's not?
-    let mut buf : [u8; 4] = [0; 4];
-    reader.read_exact(&mut buf)?;
-    let decrypted_size = u32::from_le_bytes(buf);
+    let mut chunk =  reader.take(cell.data_size as u64);
 
+    // If the cell is compressed:
+    let mut r : Cursor::<Vec<u8>> = if cell.flags & 0x00040000 == 0x00040000 {
+        let mut buf : [u8; 4] = [0; 4];
+        chunk.read_exact(&mut buf)?;
+
+        let decrypted_size = u32::from_le_bytes(buf);
+    
+        let mut out_cell = Vec::with_capacity(decrypted_size.try_into().unwrap());
+    
+        ZlibDecoder::new(chunk).read_to_end(&mut out_cell)?;
+    
+        Cursor::new(out_cell)
+    } else {
+        let mut out_cell = Vec::with_capacity(cell.data_size as usize);
+
+        chunk.read_to_end(&mut out_cell)?;
+
+        Cursor::new(out_cell)
+    };
+    // Assume the cell is compressed:
+    // TODO: What if it's not?
+    
+    
     let x : i32;
     let y : i32;
 
-    // Subtract the 4 bytes we just read:
-    let compressed_chunk = reader.take((cell.data_size as u64) - (4 as u64));
-
-    let mut out_cell = Vec::with_capacity(decrypted_size.try_into().unwrap());
-
-    ZlibDecoder::new(compressed_chunk).read_to_end(&mut out_cell)?;
-
-    let mut cell_cursor = Cursor::new(out_cell);
-
     loop {
-        let field = FieldHeader::read(&mut cell_cursor)?;
+        let field = FieldHeader::read(&mut r)?;
         // Cell location:
         if field.ty == "XCLC" {
             let mut buf : [u8; 4] = [0; 4];
 
-            cell_cursor.read_exact(&mut buf)?;
+            r.read_exact(&mut buf)?;
             x = i32::from_le_bytes(buf);
 
-            cell_cursor.read_exact(&mut buf)?;
+            r.read_exact(&mut buf)?;
             y = i32::from_le_bytes(buf);
             break;
         } else {
-            field.skip_data(&mut cell_cursor)?;
+            field.skip_data(&mut r)?;
             continue;
         }
     }
@@ -361,9 +370,10 @@ pub fn read_skyrim(reader : &mut BufReader<File>) -> std::io::Result<()> {
 
     // Read the first cell and its children:
     let first_world_cell = RecordHeader::read(reader)?;
-    read_cell(first_world_cell, reader)?;
 
-    let mut world_bytes_left = world_group.total_size - GroupHeader::header_size();
+    let cell_total_read = read_cell(first_world_cell, reader)?;
+
+    let mut world_bytes_left = world_group.total_size - (GroupHeader::header_size() + cell_total_read);
 
     while world_bytes_left > 0 {
         let block = GroupHeader::read(reader)?;
