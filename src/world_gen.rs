@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::File, path::Path, sync::RwLock};
+use std::{collections::HashMap, fs::{File, OpenOptions}, path::Path, sync::RwLock};
 
 use serde::Serialize;
 
@@ -37,13 +37,12 @@ impl BlockState {
 
 		let z_shift = (z % 4) * 4;
 
-		for y in start_y..(end_y + 1) {
+		for y in start_y..end_y {
 			let xy_idx = x + (y * 16);
 			let curr = dat[xy_idx];
 
 			let zeroed = curr & !(0b1111 << z_shift);
 			dat[xy_idx] = zeroed | ((idx as i64 & 0b1111) << z_shift);
-			println!("{xy_idx} {z_shift} {} {}", curr, dat[xy_idx]);
 		}
 	}
 
@@ -68,6 +67,14 @@ impl BlockState {
 #[derive(Serialize)]
 pub struct Biomes {
 	pub palette : Vec<String>,
+}
+
+impl Default for Biomes {
+	fn default() -> Self {
+		Self {
+			palette: vec!["minecraft:plains".into()]
+		}
+	}
 }
 
 #[derive(Serialize)]
@@ -103,9 +110,13 @@ pub struct Chunk {
 
 const MIN_Y : i32 = -1024;
 
-impl Default for Chunk {
-	fn default() -> Self {
-		let mut bottom_block = BlockState::new_from_palette(vec![
+impl Chunk {
+	pub fn into_arr(_ : usize) -> Chunk {
+		Chunk::default()
+	}
+
+	pub fn default_palette() -> Vec<Block> {
+		vec![
 			Block { 
 				name: "minecraft:air".into(),
 				properties: HashMap::new() 
@@ -113,15 +124,51 @@ impl Default for Chunk {
 			Block{
 				name: "minecraft:bedrock".into(),
 				properties: HashMap::new()
+			},
+			Block{
+				name: "minecraft:stone".into(),
+				properties: HashMap::new()
 			}
-		]);
+		]
+	}
+
+	pub fn draw_height(&mut self, x : usize, z : usize, start_height : f32, end_height : f32, idx : i8) {
+		let mut i = start_height;
+		while i < end_height {
+			let curr_y = i as i32;
+			let matching_section = self.sections.iter_mut().find(|s| {
+				s.y == (curr_y >> 4) as i8
+			});
+			
+			let section = if matching_section.is_some() {
+				matching_section.unwrap()
+			} else {
+				self.sections.push(Section{
+					y: (curr_y >> 4) as i8,
+					block_states: BlockState::new_from_palette(Self::default_palette()),
+					biomes: Biomes::default()
+				});
+				self.sections.last_mut().unwrap()
+			};
+
+			let height_draw = std::cmp::min(16, (end_height - i).round_ties_even() as usize);
+
+			section.block_states.draw_height(2, x, z, 0, height_draw);
+			i += 16.0;
+		}
+	}
+}
+
+impl Default for Chunk {
+	fn default() -> Self {
+		let mut bottom_block = BlockState::new_from_palette(Self::default_palette());
 		bottom_block.fill_layer(1, 0);
 		
 		Self {
 			data_version: 4189,
 
 			x_pos: 0,
-			y_pos: -1024,
+			y_pos: MIN_Y,
 			z_pos: 0,
 
 			status: String::from("minecraft:full"),
@@ -159,34 +206,60 @@ pub fn parse_land(land : Land) {
 
 	// Our handy units mean we can only be in one region at a given time:
 	let region = if region_path.exists() {
-		let read = File::open(region_path).unwrap();
+		let read = OpenOptions::new().read(true).write(true).open(region_path).unwrap();
 		fastanvil::Region::from_stream(read).unwrap()
 	} else {
-		let new_region = File::create(region_path).unwrap();
+		let new_region = File::create_new(region_path).unwrap();
 		fastanvil::Region::new(new_region).unwrap()
 	};
 
 	// Cells are comprised of 4 x 4 chunks, so we skip to the relevant starting chunk:
-	let chunk_start_x = (land.cell.x % 8) * 4;
-	let chunk_start_y = (land.cell.y % 8) * 4;
+	let chunk_start_x  = (land.cell.x % 8) * 4;
+	let chunk_start_z = (land.cell.y % 8) * 4;
 
-	// let default_sections = SectionTower::<Section> {
-	// 	sections: vec![],
-	// 	map: vec![],
-	// 	-1024,
-	// 	1024
-	// };
-	
+	let mut chunks : [Chunk; 16] = core::array::from_fn(Chunk::into_arr);
 
-	// let chunks : [CurrentJavaChunk; 4] = [CurrentJavaChunk {
-	// 	data_version: 4189,
-	// 	sections: SectionTower::<Section>{
-	// 		sections: vec![],
+	let mut row_offset : f32 = 0.0;
+	let mut curr_offset = land.offset_height;
 
-	// 	}
-	// }];
+	for (i, v) in land.height_gradient.iter().enumerate() {
+		// Each vertex is 128 units apart, or 2 blocks apart.
+		// So we hit the edge of our current chunk after 8 vertices.
+		// After 33 vertices, we wrap back around to the start of the cell.
+		let curr_chunk_x = (i / 8) % 33;
+		// After 264 vertices, we're at the next Z chunk. 
+		let curr_chunk_z = i / 264;
 
-	for v in land.height_gradient {
-		
+		let chunk = &mut chunks[curr_chunk_x + curr_chunk_z * 4];
+
+		let vert_height = *v as f32;
+
+		if i % 33 == 0 {
+			chunk.x_pos = curr_chunk_x as i32 + chunk_start_x;
+			chunk.y_pos = curr_chunk_z as i32 + chunk_start_z;
+
+			row_offset = 0.0;
+			curr_offset += vert_height;
+		} else {
+			row_offset += vert_height;
+		}
+
+		// Conversion is: (height * 8)/64 (Vert units -> Skyrim Units -> Minecraft Units).
+		// But it's just easier to divide by 8.
+		let block_height = (row_offset + curr_offset)/8.0;
+
+		// Because vertices are two blocks apart, we have to multiply the X and Z by two:
+		let block_x = (i % 8) * 2;
+		let block_z = ((i / 33) % 8) * 2;
+		// Shifting everything up by one to avoid overwriting bedrock.
+		chunk.draw_height(block_x, block_z, -1023.0, block_height + 1.0, 2);
+		chunk.draw_height(block_x + 1, block_z + 1, -1023.0, block_height + 1.0, 2);
+	}
+
+	for i in 0..16 {
+		let mut chunk = Chunk::default();
+
+		chunk.x_pos = chunk_start_x + (i % 4);
+		chunk.z_pos = chunk_start_z + (i / 4);
 	}
 }

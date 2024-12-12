@@ -1,4 +1,4 @@
-use std::{fs::File, io::{BufReader, Read, Write}};
+use std::{fs::{File, OpenOptions}, io::{BufReader, Read, Write}};
 
 use world_gen::Chunk;
 
@@ -6,12 +6,10 @@ mod esm;
 mod world_gen;
 
 fn main() {
-    let out_buf = std::io::Cursor::new(Vec::new());
-    let mut r = fastanvil::Region::new(out_buf).unwrap();
-    r.write_chunk(0, 0, &fastnbt::to_bytes(&Chunk::default()).unwrap()).unwrap();
-
-    let inner_stream = r.into_inner().unwrap();
-    File::create("r.0.0.mca").unwrap().write_all(&inner_stream.into_inner()).unwrap();
+    let mut r = fastanvil::Region::new(OpenOptions::new().read(true).write(true).open("r.0.0.mca").unwrap()).unwrap();
+    let mut c = Chunk::default();
+    c.draw_height(0, 0, -1024.0, -800.0, 2);
+    r.write_chunk(0, 0, &fastnbt::to_bytes(&c).unwrap()).unwrap();
     // let a = File::open("r.0.0-ref.mca").unwrap();
     // let mut r = fastanvil::Region::from_stream(a).unwrap();
     // let b = fastnbt::from_bytes::<fastanvil::CurrentJavaChunk>(&r.read_chunk(0, 0).unwrap().unwrap()).unwrap();
