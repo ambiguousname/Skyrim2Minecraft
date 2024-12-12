@@ -234,8 +234,9 @@ pub fn parse_land(land : Land) {
 
 		// Each vertex is 128 units apart, or 2 blocks apart.
 		// There are 32 vertices in a row/col, and those are split over 4 chunks.
-		let curr_chunk_x = (c % 8)/4;
-		let curr_chunk_z = (r / 8)/4;
+		// So we have 8 vertices per chunk.
+		let curr_chunk_x = (c / 8) % 4;
+		let curr_chunk_z = (r / 8) % 4;
 
 		// println!("{r},{c} {curr_chunk_z},{curr_chunk_x}");
 
@@ -269,7 +270,6 @@ pub fn parse_land(land : Land) {
 		if block_z + 1 < 16 {
 			chunk.draw_height(block_x, block_z + 1, -1023.0, block_height + 1.0, 2);
 		}
-		// TODO: Fix.
 		if !(block_x + 1 >= 16 || block_z + 1 >= 16) {
 			chunk.draw_height(block_x + 1, block_z + 1, -1023.0, block_height + 1.0, 2);
 		}
