@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::esm::{Cell, Land};
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 #[serde(rename_all="PascalCase")]
 pub struct Block {
 	pub name : String,
@@ -12,7 +12,7 @@ pub struct Block {
 	pub properties : HashMap<String, String>
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct BlockState {
 	pub palette : Vec<Block>,
 	pub data : Option<Vec<i64>>
@@ -35,7 +35,7 @@ impl BlockState {
 	pub fn draw_height(&mut self, idx : i8, x : usize, z : usize, start_y : usize, end_y : usize) {
 		let dat = self.data.as_mut().unwrap();
 
-		let z_shift = (z % 4) * 4;
+		let z_shift = (z % 16) * 4;
 
 		for y in start_y..end_y {
 			let xy_idx = x + (y * 16);
@@ -64,7 +64,7 @@ impl BlockState {
 	}
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct Biomes {
 	pub palette : Vec<String>,
 }
@@ -77,7 +77,7 @@ impl Default for Biomes {
 	}
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct Section {
 	#[serde(rename="Y")]
 	pub y : i8,
@@ -90,7 +90,7 @@ pub struct Section {
 /// fastanvil doesn't contain an implementation that's good enough for us.
 /// 
 /// Luckily, fastnbt can handle serialization for us.
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 #[serde(rename_all="PascalCase")]
 pub struct Chunk {
 	pub data_version : i32,
@@ -108,7 +108,7 @@ pub struct Chunk {
 	pub sections : Vec<Section>,
 }
 
-const MIN_Y : i32 = -1024;
+const MIN_Y : i32 = -512;
 
 impl Chunk {
 	pub fn into_arr(_ : usize) -> Chunk {
@@ -151,7 +151,7 @@ impl Chunk {
 				self.sections.last_mut().unwrap()
 			};
 
-			let height_draw = std::cmp::min(16, (end_height - i).round_ties_even() as usize);
+			let height_draw = std::cmp::min(16, (end_height - i).abs().round_ties_even() as usize);
 			section.block_states.draw_height(idx, x, z, 0, height_draw);
 			i += 16.0;
 		}
@@ -225,13 +225,6 @@ pub fn parse_land(land : Land) {
 		let r = i / 33;
 		let c = i % 33;
 
-		// Currently, we're treating each vertex as influencing the four blocks ahead of it.
-		// So we have to drop the last vertices to avoid an indexing issue.
-		// TODO: Implementing an averaging system/area of influence for vertices would be better.
-		if c == 32 || r == 32 {
-			continue;
-		}
-
 		// Each vertex is 128 units apart, or 2 blocks apart.
 		// There are 32 vertices in a row/col, and those are split over 4 chunks.
 		// So we have 8 vertices per chunk.
@@ -241,41 +234,44 @@ pub fn parse_land(land : Land) {
 		// println!("{r},{c} {curr_chunk_z},{curr_chunk_x}");
 
 		let chunk = &mut chunks[curr_chunk_x + curr_chunk_z * 4];
+		// Too lazy to come up with a better way to do this, so we always set the x_pos:
+		chunk.x_pos = curr_chunk_x as i32 + chunk_start_x;
+		chunk.z_pos = curr_chunk_z as i32 + chunk_start_z;
 
 		let vert_height = *v as f32;
 
-		if i % 33 == 0 {
-			chunk.x_pos = curr_chunk_x as i32 + chunk_start_x;
-			chunk.y_pos = curr_chunk_z as i32 + chunk_start_z;
-
+		if c == 0 {
 			row_offset = 0.0;
 			curr_offset += vert_height;
 		} else {
 			row_offset += vert_height;
 		}
 
-		// Conversion is: (height * 8)/64 (Vert units -> Skyrim Units -> Minecraft Units).
+		// Conversion is: (height * 8)/(64) (Vert units -> Skyrim Units -> Minecraft Units).
 		// But it's just easier to divide by 8.
 		let block_height = (row_offset + curr_offset)/8.0;
 
-		// Vertices are two blocks apart, so we divide by 2:
-		let block_x = c/2;
-		let block_z = r/2;
+		// TODO: We currently drop the last vertex because we don't account for it. We treat each vertex as having influence over blocks 2 x 2in front of it.
+		// An area of influence would probably be better.
+		if c == 32 || r == 32 {
+			continue;
+		}
 
+		let block_x = (c % 8) * 2;
+		let block_z = (r % 8) * 2;
+
+		// Vertices are two blocks apart, so we write in a 2 x 2 block grid:
 		// Shifting everything up by one to avoid overwriting bedrock.
-		chunk.draw_height(block_x, block_z, -1023.0, block_height + 1.0, 2);
-		if block_x + 1 < 16 {
-			chunk.draw_height(block_x + 1, block_z, -1023.0, block_height + 1.0, 2);
-		}
-		if block_z + 1 < 16 {
-			chunk.draw_height(block_x, block_z + 1, -1023.0, block_height + 1.0, 2);
-		}
-		if !(block_x + 1 >= 16 || block_z + 1 >= 16) {
-			chunk.draw_height(block_x + 1, block_z + 1, -1023.0, block_height + 1.0, 2);
-		}
+		chunk.draw_height(block_x, block_z, MIN_Y as f32 + 1.0, block_height + 1.0, 2);
+		chunk.draw_height(block_x + 1, block_z, MIN_Y as f32 + 1.0, block_height + 1.0, 2);
+		chunk.draw_height(block_x, block_z + 1, MIN_Y as f32 + 1.0, block_height + 1.0, 2);
+		chunk.draw_height(block_x + 1, block_z + 1, MIN_Y as f32 + 1.0, block_height + 1.0, 2);
 	}
 
-	for c in chunks {
-		region.write_chunk((c.x_pos - chunk_start_x) as usize, (c.z_pos - chunk_start_z) as usize, &fastnbt::to_bytes(&c).unwrap()).unwrap();
+	for c in chunks.iter_mut() {
+		c.x_pos = 0;
+		c.z_pos = 0;
+		region.write_chunk((c.x_pos % 32) as usize, (c.z_pos % 32) as usize, &fastnbt::to_bytes(&c).unwrap()).unwrap();
+		break;
 	}
 }
