@@ -152,8 +152,7 @@ impl Chunk {
 			};
 
 			let height_draw = std::cmp::min(16, (end_height - i).round_ties_even() as usize);
-
-			section.block_states.draw_height(2, x, z, 0, height_draw);
+			section.block_states.draw_height(idx, x, z, 0, height_draw);
 			i += 16.0;
 		}
 	}
@@ -205,7 +204,7 @@ pub fn parse_land(land : Land) {
 	let region_path = Path::new(&region_name);
 
 	// Our handy units mean we can only be in one region at a given time:
-	let region = if region_path.exists() {
+	let mut region = if region_path.exists() {
 		let read = OpenOptions::new().read(true).write(true).open(region_path).unwrap();
 		fastanvil::Region::from_stream(read).unwrap()
 	} else {
@@ -223,12 +222,22 @@ pub fn parse_land(land : Land) {
 	let mut curr_offset = land.offset_height;
 
 	for (i, v) in land.height_gradient.iter().enumerate() {
+		let r = i / 33;
+		let c = i % 33;
+
+		// Currently, we're treating each vertex as influencing the four blocks ahead of it.
+		// So we have to drop the last vertices to avoid an indexing issue.
+		// TODO: Implementing an averaging system/area of influence for vertices would be better.
+		if c == 32 || r == 32 {
+			continue;
+		}
+
 		// Each vertex is 128 units apart, or 2 blocks apart.
-		// So we hit the edge of our current chunk after 8 vertices.
-		// After 33 vertices, we wrap back around to the start of the cell.
-		let curr_chunk_x = (i / 8) % 33;
-		// After 264 vertices, we're at the next Z chunk. 
-		let curr_chunk_z = i / 264;
+		// There are 32 vertices in a row/col, and those are split over 4 chunks.
+		let curr_chunk_x = (c % 8)/4;
+		let curr_chunk_z = (r / 8)/4;
+
+		// println!("{r},{c} {curr_chunk_z},{curr_chunk_x}");
 
 		let chunk = &mut chunks[curr_chunk_x + curr_chunk_z * 4];
 
@@ -248,18 +257,25 @@ pub fn parse_land(land : Land) {
 		// But it's just easier to divide by 8.
 		let block_height = (row_offset + curr_offset)/8.0;
 
-		// Because vertices are two blocks apart, we have to multiply the X and Z by two:
-		let block_x = (i % 8) * 2;
-		let block_z = ((i / 33) % 8) * 2;
+		// Vertices are two blocks apart, so we divide by 2:
+		let block_x = c/2;
+		let block_z = r/2;
+
 		// Shifting everything up by one to avoid overwriting bedrock.
 		chunk.draw_height(block_x, block_z, -1023.0, block_height + 1.0, 2);
-		chunk.draw_height(block_x + 1, block_z + 1, -1023.0, block_height + 1.0, 2);
+		if block_x + 1 < 16 {
+			chunk.draw_height(block_x + 1, block_z, -1023.0, block_height + 1.0, 2);
+		}
+		if block_z + 1 < 16 {
+			chunk.draw_height(block_x, block_z + 1, -1023.0, block_height + 1.0, 2);
+		}
+		// TODO: Fix.
+		if !(block_x + 1 >= 16 || block_z + 1 >= 16) {
+			chunk.draw_height(block_x + 1, block_z + 1, -1023.0, block_height + 1.0, 2);
+		}
 	}
 
-	for i in 0..16 {
-		let mut chunk = Chunk::default();
-
-		chunk.x_pos = chunk_start_x + (i % 4);
-		chunk.z_pos = chunk_start_z + (i / 4);
+	for c in chunks {
+		region.write_chunk((c.x_pos - chunk_start_x) as usize, (c.z_pos - chunk_start_z) as usize, &fastnbt::to_bytes(&c).unwrap()).unwrap();
 	}
 }
