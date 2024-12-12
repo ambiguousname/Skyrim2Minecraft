@@ -268,10 +268,7 @@ pub fn parse_land(land : Land) {
 		chunk.draw_height(block_x + 1, block_z + 1, MIN_Y as f32 + 1.0, block_height + 1.0, 2);
 	}
 
-	for c in chunks.iter_mut() {
-		c.x_pos = 0;
-		c.z_pos = 0;
+	for c in chunks {
 		region.write_chunk((c.x_pos % 32) as usize, (c.z_pos % 32) as usize, &fastnbt::to_bytes(&c).unwrap()).unwrap();
-		break;
 	}
 }
