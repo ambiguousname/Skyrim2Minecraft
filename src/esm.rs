@@ -188,7 +188,7 @@ pub struct Cell {
 pub struct Land {
     pub cell : Cell,
 	pub offset_height : f32,
-	pub height_gradient : Vec<u8>,
+	pub height_gradient : Vec<i8>,
 }
 
 fn read_land(cell : Cell, land : &RecordHeader, reader : &mut (impl Read + Seek)) -> std::io::Result<()> {
@@ -224,7 +224,7 @@ fn read_land(cell : Cell, land : &RecordHeader, reader : &mut (impl Read + Seek)
 			for _ in 0..1089 {
 				land_cursor.read_exact(&mut byte)?;
 
-				let height_byte = u8::from_le_bytes(byte);
+				let height_byte = i8::from_le_bytes(byte);
 
 				height_gradient.push(height_byte);
 			}
