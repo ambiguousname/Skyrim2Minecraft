@@ -197,6 +197,9 @@ pub fn parse_land(land : Land) {
 
 	// So our current region position is:
 	// floor(Cell Position/8)
+	// TODO: Not sure this is giving us negative regions?
+	// TODO: Per cubicmetre, -Z is North (and -X is West).
+	// So to match things up with Skyrim, we need to start from the southwest corner (+Z, -X)
 	let curr_region_x = land.cell.x / 8; 
 	let curr_region_y = land.cell.y / 8;
 
