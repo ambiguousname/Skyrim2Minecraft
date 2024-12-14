@@ -213,10 +213,11 @@ pub fn parse_land(land : Land) {
 		fastanvil::Region::new(new_region).unwrap()
 	};
 
-	// Cells are comprised of 4 x 4 chunks, so we skip to the relevant starting chunk:
+	// Cells are comprised of 4 x 4 chunks, so we skip to the relevant starting chunk.
+	// We need this in chunk coordinates relative to the world origin (0, 0).
 	// Per cubicmetre, -Z is North (and -X is West).
-	let chunk_start_x  = (land.cell.x % 8) * 4;
-	let chunk_start_z = (land.cell.y % 8) * 4;
+	let chunk_start_x  = land.cell.x * 4;
+	let chunk_start_z = land.cell.y * 4;
 
 	let mut chunks : [Chunk; 16] = core::array::from_fn(Chunk::into_arr);
 
