@@ -231,8 +231,8 @@ pub fn parse_land(land : Land) {
 		// Each vertex is 128 units apart, or 2 blocks apart.
 		// There are 32 vertices in a row/col, and those are split over 4 chunks.
 		// So we have 8 vertices per chunk.
-		let curr_chunk_x = (r / 8) % 4;
-		let curr_chunk_z = (c / 8) % 4;
+		let curr_chunk_x = (c / 8) % 4;
+		let curr_chunk_z = (r / 8) % 4;
 
 		// println!("{r},{c} {curr_chunk_z},{curr_chunk_x}");
 
@@ -260,8 +260,8 @@ pub fn parse_land(land : Land) {
 			continue;
 		}
 
-		let block_x = (r % 8) * 2;
-		let block_z = (c % 8) * 2;
+		let block_x = (c % 8) * 2;
+		let block_z = (r % 8) * 2;
 
 		// Vertices are two blocks apart, so we write in a 2 x 2 block grid:
 		// Shifting everything up by one to avoid overwriting bedrock.
