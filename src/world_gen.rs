@@ -252,8 +252,8 @@ pub fn parse_land(land : Land) {
 
 		// Conversion is: (height * 8)/(64) (Vert units -> Skyrim Units -> Minecraft Units).
 		// But it's just easier to divide by 8.
-		// We also divide by 1.42 to scale down the height to fit within a Minecraft world with a maximum height 1,440 blocks.
-		let block_height = (row_offset + curr_offset)/(8.0 * 1.42);
+		// We also divide by 1.42125 to scale down the height to fit within a Minecraft world with a maximum height 1,440 blocks.
+		let block_height = (row_offset + curr_offset)/(8.0 * 1.4125);
 
 		// TODO: We currently drop the last vertex because we don't account for it. We treat each vertex as having influence over blocks 2 x 2in front of it.
 		// An area of influence would probably be better.
@@ -266,7 +266,7 @@ pub fn parse_land(land : Land) {
 
 		let min_yf = MIN_Y as f32;
 		let start_height = min_yf + 1.0;
-		let end_height = block_height + start_height;
+		let end_height = block_height + 1.0;
 
 		// Vertices are two blocks apart, so we write in a 2 x 2 block grid:
 		// Shifting everything up by one to avoid overwriting bedrock.
