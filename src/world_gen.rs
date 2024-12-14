@@ -108,7 +108,7 @@ pub struct Chunk {
 	pub sections : Vec<Section>,
 }
 
-const MIN_Y : i32 = -512;
+const MIN_Y : i32 = -592;
 
 impl Chunk {
 	pub fn into_arr(_ : usize) -> Chunk {
