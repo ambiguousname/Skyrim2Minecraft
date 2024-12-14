@@ -198,8 +198,8 @@ pub fn parse_land(land : Land) {
 	// So our current region position is:
 	// floor(Cell Position/8)
 	// TODO: Not sure this is giving us negative regions?
-	let curr_region_x = land.cell.x / 8; 
-	let curr_region_y = land.cell.y / 8;
+	let curr_region_x = land.cell.x.div_euclid(8);
+	let curr_region_y = land.cell.y.div_euclid(8);
 
 	let region_name = format!("r.{curr_region_x}.{curr_region_y}.mca");
 	let region_path = Path::new(&region_name);
@@ -271,6 +271,6 @@ pub fn parse_land(land : Land) {
 	}
 
 	for c in chunks {
-		region.write_chunk((c.x_pos % 32) as usize, (c.z_pos % 32) as usize, &fastnbt::to_bytes(&c).unwrap()).unwrap();
+		region.write_chunk((c.x_pos).rem_euclid(32) as usize, (c.z_pos).rem_euclid(32) as usize, &fastnbt::to_bytes(&c).unwrap()).unwrap();
 	}
 }
