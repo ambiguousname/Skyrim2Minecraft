@@ -266,7 +266,7 @@ pub fn parse_land(land : Land) {
 
 		let min_yf = MIN_Y as f32;
 		let start_height = min_yf + 1.0;
-		let end_height = (block_height - min_yf) + 1.0;
+		let end_height = block_height + start_height;
 
 		// Vertices are two blocks apart, so we write in a 2 x 2 block grid:
 		// Shifting everything up by one to avoid overwriting bedrock.
