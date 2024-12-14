@@ -35,14 +35,14 @@ impl BlockState {
 	pub fn draw_height(&mut self, idx : i8, x : usize, z : usize, start_y : usize, end_y : usize) {
 		let dat = self.data.as_mut().unwrap();
 
-		let z_shift = (z % 16) * 4;
+		let z_shift = (x % 16) * 4;
 
 		for y in start_y..end_y {
-			let xy_idx = x + (y * 16);
-			let curr = dat[xy_idx];
+			let zy_idx = z + (y * 16);
+			let curr = dat[zy_idx];
 
 			let zeroed = curr & !(0b1111 << z_shift);
-			dat[xy_idx] = zeroed | ((idx as i64 & 0b1111) << z_shift);
+			dat[zy_idx] = zeroed | ((idx as i64 & 0b1111) << z_shift);
 		}
 	}
 
@@ -57,9 +57,9 @@ impl BlockState {
 			full |= idx_64 << (i * 4);
 		}
 
-		for x in 0..16 {
-			let xy_idx = x + (y * 16);
-			dat[xy_idx] = full;
+		for z in 0..16 {
+			let zy_idx = z + (y * 16);
+			dat[zy_idx] = full;
 		}
 	}
 }
@@ -198,8 +198,6 @@ pub fn parse_land(land : Land) {
 	// So our current region position is:
 	// floor(Cell Position/8)
 	// TODO: Not sure this is giving us negative regions?
-	// TODO: Per cubicmetre, -Z is North (and -X is West).
-	// So to match things up with Skyrim, we need to start from the southwest corner (+Z, -X)
 	let curr_region_x = land.cell.x / 8; 
 	let curr_region_y = land.cell.y / 8;
 
@@ -216,6 +214,7 @@ pub fn parse_land(land : Land) {
 	};
 
 	// Cells are comprised of 4 x 4 chunks, so we skip to the relevant starting chunk:
+	// Per cubicmetre, -Z is North (and -X is West).
 	let chunk_start_x  = (land.cell.x % 8) * 4;
 	let chunk_start_z = (land.cell.y % 8) * 4;
 
@@ -231,8 +230,8 @@ pub fn parse_land(land : Land) {
 		// Each vertex is 128 units apart, or 2 blocks apart.
 		// There are 32 vertices in a row/col, and those are split over 4 chunks.
 		// So we have 8 vertices per chunk.
-		let curr_chunk_x = (c / 8) % 4;
-		let curr_chunk_z = (r / 8) % 4;
+		let curr_chunk_x = (r / 8) % 4;
+		let curr_chunk_z = (c / 8) % 4;
 
 		// println!("{r},{c} {curr_chunk_z},{curr_chunk_x}");
 
@@ -260,8 +259,8 @@ pub fn parse_land(land : Land) {
 			continue;
 		}
 
-		let block_x = (c % 8) * 2;
-		let block_z = (r % 8) * 2;
+		let block_x = (r % 8) * 2;
+		let block_z = (c % 8) * 2;
 
 		// Vertices are two blocks apart, so we write in a 2 x 2 block grid:
 		// Shifting everything up by one to avoid overwriting bedrock.
