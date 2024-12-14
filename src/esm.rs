@@ -2,6 +2,7 @@ use core::str;
 use std::{fs::File, io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom}};
 
 use flate2::read::ZlibDecoder;
+use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::world_gen::parse_land;
 
@@ -277,7 +278,7 @@ fn read_cell_refs(cell : Cell, reader : &mut (impl Read + Seek)) -> std::io::Res
 }
 
 /// Returns bytes read.
-fn read_cell(cell : RecordHeader, reader : &mut (impl Read + Seek)) -> std::io::Result<u32> {
+fn read_cell(cell : RecordHeader, reader : &mut (impl Read + Seek)) -> std::io::Result<(u32, Cell)> {
     let mut chunk =  reader.take(cell.data_size as u64);
 
     // If the cell is compressed:
@@ -325,7 +326,7 @@ fn read_cell(cell : RecordHeader, reader : &mut (impl Read + Seek)) -> std::io::
     }
     let total_read = read_cell_refs(Cell {x, y}, reader)? + cell.data_size + RecordHeader::header_size();
     
-    Ok(total_read)
+    Ok((total_read, Cell{x, y}))
 }
 
 fn grab_world_children(buf_reader : &mut BufReader<File>) -> Result<GroupHeader, std::io::Error> {
@@ -372,9 +373,12 @@ pub fn read_skyrim(reader : &mut BufReader<File>) -> std::io::Result<()> {
     // Read the first cell and its children:
     let first_world_cell = RecordHeader::read(reader)?;
 
-    let cell_total_read = read_cell(first_world_cell, reader)?;
+    let (cell_total_read, _) = read_cell(first_world_cell, reader)?;
 
     let mut world_bytes_left = world_group.total_size - (GroupHeader::header_size() + cell_total_read);
+
+    let bar = ProgressBar::new(11186);
+    bar.set_style(ProgressStyle::with_template("[{elapsed_precise}] {bar:100} {msg}").unwrap());
 
     while world_bytes_left > 0 {
         let block = GroupHeader::read(reader)?;
@@ -388,8 +392,12 @@ pub fn read_skyrim(reader : &mut BufReader<File>) -> std::io::Result<()> {
 
             while subblock_left_to_read > 0 {
                 let cell = RecordHeader::read(reader)?;
+
+                let (left, c) = read_cell(cell, reader)?;
                 
-                subblock_left_to_read -= read_cell(cell, reader)?;
+                subblock_left_to_read -= left;
+                bar.set_message(format!("{},{}", c.x, c.y));
+                bar.inc(1);
             }
 
             block_left_to_read -= subblock.total_size;
