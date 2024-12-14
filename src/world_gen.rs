@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::{File, OpenOptions}, path::Path, sync::RwLock};
+use std::{collections::HashMap, fs::{File, OpenOptions}, path::Path};
 
 use serde::Serialize;
 
@@ -252,8 +252,7 @@ pub fn parse_land(land : Land) {
 
 		// Conversion is: (height * 8)/(64) (Vert units -> Skyrim Units -> Minecraft Units).
 		// But it's just easier to divide by 8.
-		// We also divide by 1.42125 to scale down the height to fit within a Minecraft world with a maximum height 1,440 blocks.
-		let block_height = (row_offset + curr_offset)/(8.0 * 1.4125);
+		let block_height = (row_offset + curr_offset)/(8.0);
 
 		// TODO: We currently drop the last vertex because we don't account for it. We treat each vertex as having influence over blocks 2 x 2in front of it.
 		// An area of influence would probably be better.
