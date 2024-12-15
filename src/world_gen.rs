@@ -2,7 +2,7 @@ use std::{collections::HashMap, fs::{File, OpenOptions}, path::Path};
 
 use serde::Serialize;
 
-use crate::esm::{Cell, Land};
+use crate::esm::Land;
 
 #[derive(Serialize, Debug)]
 #[serde(rename_all="PascalCase")]
