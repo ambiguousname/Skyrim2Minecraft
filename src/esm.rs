@@ -1,13 +1,14 @@
 use core::str;
 use std::{fs::File, io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom}};
 
+use clap::ValueEnum;
 use flate2::read::ZlibDecoder;
 use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::world_gen::parse_land;
 
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 pub enum DataVersion {
     Skyrim,
     Oblivion

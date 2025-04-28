@@ -1,23 +1,27 @@
-use std::{fs::File, io::BufReader, path::Path};
+use std::{fs::File, io::BufReader, path::PathBuf};
+
+use clap::Parser;
+use esm::DataVersion;
 
 mod esm;
 mod world_gen;
 
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// .esm file to load world data from and convert into Minecraft .mca files.
+    file : PathBuf,
+
+    /// ESM Data Version to use.
+    #[arg(value_enum)]
+    data_version : DataVersion,
+}
+
 fn main() {
-    let args : Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
-        println!("Usage: Skyrim2Minecraft <.esm filepath>");
-        return;
-    }
+    let args = Args::parse();
 
-    let pth = Path::new(&args[1]);
-    if !pth.exists() {
-        println!("{} does not exist.", pth.display());
-        return;
-    }
-
-    let skyrim = File::open(pth).unwrap();
+    let skyrim = File::open(args.file).unwrap();
 
     let mut buf_reader = BufReader::new(skyrim);
-    esm::ESMReader::read(esm::DataVersion::Skyrim, &mut buf_reader).unwrap();
+    esm::ESMReader::read(args.data_version, &mut buf_reader).unwrap();
 }
