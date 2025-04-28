@@ -1,5 +1,6 @@
 use core::str;
 use std::{fs::File, io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom}};
+use rayon::prelude::*;
 
 use flate2::read::ZlibDecoder;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -247,7 +248,7 @@ fn read_land(cell : Cell, land : &RecordHeader, reader : &mut (impl Read + Seek)
 }
 
 /// Returns bytes read.
-fn read_cell_refs(cell : Cell, reader : &mut (impl Read + Seek)) -> std::io::Result<u32> {
+fn read_cell_refs(cell : Cell, reader : &mut Cursor<Vec<u8>>) -> std::io::Result<u32> {
     let cell_child_grp = GroupHeader::read(reader)?;
     assert_eq!(cell_child_grp.ty, "GRUP");
 
@@ -278,53 +279,44 @@ fn read_cell_refs(cell : Cell, reader : &mut (impl Read + Seek)) -> std::io::Res
 }
 
 /// Returns bytes read.
-fn read_cell(cell : RecordHeader, reader : &mut (impl Read + Seek)) -> std::io::Result<(u32, Cell)> {
-    let mut chunk =  reader.take(cell.data_size as u64);
-
+fn read_cell(cell : RecordHeader, mut reader : Cursor<Vec<u8>>) -> std::io::Result<(u32, Cell)> {
     // If the cell is compressed:
-    let mut r : Cursor::<Vec<u8>> = if cell.flags & 0x00040000 == 0x00040000 {
+    reader = if cell.flags & 0x00040000 == 0x00040000 {
         let mut buf : [u8; 4] = [0; 4];
-        chunk.read_exact(&mut buf)?;
+        reader.read_exact(&mut buf)?;
 
         let decrypted_size = u32::from_le_bytes(buf);
     
-        let mut out_cell = Vec::with_capacity(decrypted_size.try_into().unwrap());
+        let mut out_cell = vec![0; decrypted_size as usize];
     
-        ZlibDecoder::new(chunk).read_to_end(&mut out_cell)?;
+        ZlibDecoder::new(reader).read_to_end(&mut out_cell)?;
     
         Cursor::new(out_cell)
     } else {
-        let mut out_cell = Vec::with_capacity(cell.data_size as usize);
-
-        chunk.read_to_end(&mut out_cell)?;
-
-        Cursor::new(out_cell)
+        reader
     };
-    // Assume the cell is compressed:
-    // TODO: What if it's not?
-    
     
     let x : i32;
     let y : i32;
 
     loop {
-        let field = FieldHeader::read(&mut r)?;
+        let field = FieldHeader::read(&mut reader)?;
         // Cell location:
         if field.ty == "XCLC" {
             let mut buf : [u8; 4] = [0; 4];
 
-            r.read_exact(&mut buf)?;
+            reader.read_exact(&mut buf)?;
             x = i32::from_le_bytes(buf);
 
-            r.read_exact(&mut buf)?;
+            reader.read_exact(&mut buf)?;
             y = i32::from_le_bytes(buf);
             break;
         } else {
-            field.skip_data(&mut r)?;
+            field.skip_data(&mut reader)?;
             continue;
         }
     }
-    let total_read = read_cell_refs(Cell {x, y}, reader)? + cell.data_size + RecordHeader::header_size();
+    let total_read = read_cell_refs(Cell {x, y}, &mut reader)? + cell.data_size + RecordHeader::header_size();
     
     Ok((total_read, Cell{x, y}))
 }
@@ -367,13 +359,16 @@ fn grab_world_children(buf_reader : &mut BufReader<File>) -> Result<GroupHeader,
     Ok(group)
 }
 
-pub fn read_skyrim(reader : &mut BufReader<File>) -> std::io::Result<()> {
+pub fn read_esm(reader : &mut BufReader<File>) -> std::io::Result<()> {
 	let world_group = grab_world_children(reader)?;
 
     // Read the first cell and its children:
     let first_world_cell = RecordHeader::read(reader)?;
 
-    let (cell_total_read, _) = read_cell(first_world_cell, reader)?;
+    let mut cell_buf = vec![0; first_world_cell.data_size as usize];
+    reader.read_exact(&mut cell_buf)?;
+
+    let (cell_total_read, _) = read_cell(first_world_cell, Cursor::new(cell_buf))?;
 
     let mut world_bytes_left = world_group.total_size - (GroupHeader::header_size() + cell_total_read);
 
@@ -393,10 +388,16 @@ pub fn read_skyrim(reader : &mut BufReader<File>) -> std::io::Result<()> {
             while subblock_left_to_read > 0 {
                 let cell = RecordHeader::read(reader)?;
 
-                let (left, c) = read_cell(cell, reader)?;
+                let mut record_buf = vec![0; cell.data_size as usize];
                 
-                subblock_left_to_read -= left;
-                bar.set_message(format!("{},{}", c.x, c.y));
+                reader.read_exact(&mut record_buf)?;
+                
+                subblock_left_to_read -= cell.data_size;
+
+                rayon::spawn(move || { 
+                    read_cell(cell, Cursor::new(record_buf)).expect("Could not read cell.");
+                });
+                
                 bar.inc(1);
             }
 

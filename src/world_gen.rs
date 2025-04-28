@@ -1,7 +1,8 @@
-use std::{collections::HashMap, fs::{File, OpenOptions}, path::Path};
+use std::{collections::HashMap, fs::{File, OpenOptions}, io::{Seek, Write}, path::Path};
 
 use serde::Serialize;
 
+use file_guard::Lock;
 use crate::esm::Land;
 
 #[derive(Serialize, Debug)]
@@ -201,18 +202,6 @@ pub fn parse_land(land : Land) {
 	let curr_region_x = land.cell.x.div_euclid(8);
 	let curr_region_y = land.cell.y.div_euclid(8);
 
-	let region_name = format!("r.{curr_region_x}.{curr_region_y}.mca");
-	let region_path = Path::new(&region_name);
-
-	// Our handy units mean we can only be in one region at a given time:
-	let mut region = if region_path.exists() {
-		let read = OpenOptions::new().read(true).write(true).open(region_path).unwrap();
-		fastanvil::Region::from_stream(read).unwrap()
-	} else {
-		let new_region = File::create_new(region_path).unwrap();
-		fastanvil::Region::new(new_region).unwrap()
-	};
-
 	// Cells are comprised of 4 x 4 chunks, so we skip to the relevant starting chunk.
 	// We need this in chunk coordinates relative to the world origin (0, 0).
 	// Per cubicmetre, -Z is North (and -X is West).
@@ -275,7 +264,29 @@ pub fn parse_land(land : Land) {
 		chunk.draw_height(block_x + 1, block_z + 1, start_height, end_height, 2);
 	}
 
-	for c in chunks {
-		region.write_chunk((c.x_pos).rem_euclid(32) as usize, (c.z_pos).rem_euclid(32) as usize, &fastnbt::to_bytes(&c).unwrap()).unwrap();
+	let region_name = format!("r.{curr_region_x}.{curr_region_y}.mca");
+	let region_path = Path::new(&region_name);
+	
+	let region_exists = region_path.exists();
+
+	let mut file = OpenOptions::new().read(true).append(true).create(true).open(region_path).unwrap();
+	
+	let mut lock = file_guard::lock(&mut file, Lock::Exclusive, 0, usize::MAX).expect("Could not lock file.");
+
+	{
+		let f = &mut lock as &mut File;
+
+		f.rewind().expect("Could not rewind to start of file.");
+		
+		// Our handy units mean we can only be in one region at a given time:
+		let mut region = if region_exists {
+			fastanvil::Region::from_stream(f).unwrap()
+		} else {
+			fastanvil::Region::new(f).unwrap()
+		};
+
+		for c in chunks {
+			region.write_chunk((c.x_pos).rem_euclid(32) as usize, (c.z_pos).rem_euclid(32) as usize, &fastnbt::to_bytes(&c).unwrap()).unwrap();
+		}
 	}
 }
