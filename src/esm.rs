@@ -1,5 +1,5 @@
 use core::str;
-use std::{fs::File, io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom}};
+use std::{fs::File, io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom}, rc::Rc};
 
 use clap::ValueEnum;
 use flate2::read::ZlibDecoder;
@@ -90,27 +90,38 @@ impl<'a> ESMReader<'a> {
             
             while block_left_to_read > 0 {
                 let subblock = GroupHeader::read(esm_reader.reader, esm_reader.version).expect("Could not read group header.");
-    
-                let mut subblock_left_to_read = subblock.total_size - GroupHeader::header_size(esm_reader.version);
-    
-                while subblock_left_to_read > 0 {
-                    let cell = RecordHeader::read(esm_reader.reader, esm_reader.version).expect("Could not read record header.");
-    
-                    // TODO: Don't think this is async, cells don't have a record of their length.
-                    // rayon::spawn(move || { 
-                    let (left, c) = ESMReader::read_cell(esm_reader.reader, esm_reader.version, cell).expect("Could not read cell.");
-                    // });
-                    
-                    bar.set_message(format!("{},{}", c.x, c.y));
-                    bar.inc(left as u64);
-
-                    subblock_left_to_read -= left;
-                }
-    
+                
+                // TODO: Not reading this right somehow, resulting in overflow.
                 block_left_to_read -= subblock.total_size;
+
+                let mut subblock_buf = vec![0; (subblock.total_size - GroupHeader::header_size(esm_reader.version)) as usize];
+
+                esm_reader.reader.read_exact(&mut subblock_buf).expect("Could not read subblock.");
+
+                let bar = bar.clone();
+
+                rayon::spawn(move || {
+                    ESMReader::read_subblock(Cursor::new(subblock_buf), esm_reader.version, subblock, bar);
+                });
             }
     
             world_bytes_left -= block.total_size;
+        }
+    }
+
+    fn read_subblock(mut reader : Cursor<Vec<u8>>, version : DataVersion, subblock : GroupHeader, bar : ProgressBar) {
+    
+        let mut subblock_left_to_read = subblock.total_size - GroupHeader::header_size(version);
+
+        while subblock_left_to_read > 0 {
+            let cell = RecordHeader::read(&mut reader, version).expect("Could not read record header.");
+
+            let (left, c) = ESMReader::read_cell(&mut reader, version, cell).expect("Could not read cell.");
+            
+            bar.set_message(format!("{},{}", c.x, c.y));
+            bar.inc(left as u64);
+
+            subblock_left_to_read -= left;
         }
     }
 
