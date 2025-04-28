@@ -19,5 +19,5 @@ fn main() {
     let skyrim = File::open(pth).unwrap();
 
     let mut buf_reader = BufReader::new(skyrim);
-    esm::read_esm(&mut buf_reader).unwrap();
+    esm::ESMReader::read(esm::DataVersion::Skyrim, &mut buf_reader).unwrap();
 }

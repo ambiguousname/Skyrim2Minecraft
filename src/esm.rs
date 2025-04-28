@@ -1,36 +1,225 @@
 use core::str;
 use std::{fs::File, io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom}};
-use rayon::prelude::*;
 
 use flate2::read::ZlibDecoder;
 use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::world_gen::parse_land;
 
+
+#[derive(Debug, Clone, Copy)]
+pub enum DataVersion {
+    Skyrim,
+    Oblivion
+}
+
+pub struct ESMReader<'a> {
+    version : DataVersion,
+    reader : &'a mut BufReader<File>,
+}
+
+impl<'a> ESMReader<'a> {
+
+    // fn field_header_size(&self) -> u32 {
+    //     6
+    // }
+
+    fn grab_world_children(&mut self) -> Result<GroupHeader, std::io::Error> {
+        let tes4 = RecordHeader::read(self.reader, self.version)?;
+    
+        assert_eq!(tes4.ty, "TES4");
+    
+        self.reader.seek(SeekFrom::Current(tes4.data_size.into()))?;
+    
+        let mut group : GroupHeader;
+    
+        loop {
+            group = GroupHeader::read(self.reader, self.version)?;
+            let label = str::from_utf8(&group.label).unwrap();
+            if label == "WRLD" {
+                break;
+            }
+            group.skip_data(self.reader)?;
+        }
+        
+        let world_record = RecordHeader::read(self.reader, self.version)?;
+    
+        assert_eq!(world_record.ty, "WRLD");
+    
+        // We know this is EDID
+        let edid = FieldHeader::read(self.reader, self.version)?;
+    
+        let mut world_string_buf : Vec<u8> = Vec::new();
+        self.reader.read_until(b'\0', &mut world_string_buf)?;
+        let world_string = String::from_utf8(world_string_buf).unwrap();
+        assert_eq!(world_string, String::from("Tamriel\0"));
+    
+        self.reader.seek_relative((world_record.data_size - u32::from(edid.size) - FieldHeader::header_size(self.version)).into())?;
+    
+        // World Children group:
+        let group = GroupHeader::read(self.reader, self.version)?;
+    
+        Ok(group)
+    }
+
+    pub fn read(version : DataVersion, reader : &'a mut BufReader<File>) -> std::io::Result<()> {
+        let mut esm_reader = Self {
+            version,
+            reader
+        };
+
+        let world_group = esm_reader.grab_world_children()?;
+    
+        // Read the first cell and its children:
+        let first_world_cell = RecordHeader::read(esm_reader.reader, esm_reader.version)?;
+    
+        let mut cell_buf = vec![0; first_world_cell.data_size as usize];
+        esm_reader.reader.read_exact(&mut cell_buf)?;
+    
+        let (cell_total_read, _) = ESMReader::read_cell(Cursor::new(cell_buf), esm_reader.version, first_world_cell)?;
+    
+        let mut world_bytes_left = world_group.total_size - (GroupHeader::header_size(esm_reader.version) + cell_total_read);
+    
+        let bar = ProgressBar::new(11186);
+        bar.set_style(ProgressStyle::with_template("[{elapsed_precise}] {bar:100} {msg}").unwrap());
+    
+        while world_bytes_left > 0 {
+            let block = GroupHeader::read(esm_reader.reader, esm_reader.version)?;
+    
+            let mut block_left_to_read = block.total_size - GroupHeader::header_size(esm_reader.version);
+            
+            while block_left_to_read > 0 {
+                let subblock = GroupHeader::read(esm_reader.reader, esm_reader.version)?;
+    
+                let mut subblock_left_to_read = subblock.total_size - GroupHeader::header_size(esm_reader.version);
+    
+                while subblock_left_to_read > 0 {
+                    let cell = RecordHeader::read(esm_reader.reader, esm_reader.version)?;
+    
+                    let mut record_buf = vec![0; cell.data_size as usize];
+                    
+                    esm_reader.reader.read_exact(&mut record_buf)?;
+                    
+                    subblock_left_to_read -= cell.data_size;
+    
+                    rayon::spawn(move || { 
+                        ESMReader::read_cell(Cursor::new(record_buf), esm_reader.version, cell).expect("Could not read cell.");
+                    });
+                    
+                    bar.inc(1);
+                }
+    
+                block_left_to_read -= subblock.total_size;
+            }
+    
+            world_bytes_left -= block.total_size;
+        }
+    
+        Ok(())
+    }
+
+    /// Returns bytes read.
+    fn read_cell(mut reader : Cursor<Vec<u8>>, version : DataVersion, cell : RecordHeader) -> std::io::Result<(u32, Cell)> {
+        // If the cell is compressed:
+        let mut reader = if cell.flags & 0x00040000 == 0x00040000 {
+            let mut buf : [u8; 4] = [0; 4];
+            reader.read_exact(&mut buf)?;
+
+            let decrypted_size = u32::from_le_bytes(buf);
+        
+            let mut out_cell = vec![0; decrypted_size as usize];
+        
+            ZlibDecoder::new(reader).read_to_end(&mut out_cell)?;
+        
+            Cursor::new(out_cell)
+        } else {
+            reader
+        };
+        
+        let x : i32;
+        let y : i32;
+
+        loop {
+            let field = FieldHeader::read(&mut reader, version)?;
+            // Cell location:
+            if field.ty == "XCLC" {
+                let mut buf : [u8; 4] = [0; 4];
+
+                reader.read_exact(&mut buf)?;
+                x = i32::from_le_bytes(buf);
+
+                reader.read_exact(&mut buf)?;
+                y = i32::from_le_bytes(buf);
+                break;
+            } else {
+                field.skip_data(&mut reader)?;
+                continue;
+            }
+        }
+        let total_read = ESMReader::read_cell_refs(&mut reader, version, Cell {x, y})? + cell.data_size + RecordHeader::header_size(version);
+        
+        Ok((total_read, Cell{x, y}))
+    }
+
+    /// Returns bytes read.
+    fn read_cell_refs(reader : &mut Cursor<Vec<u8>>, version : DataVersion, cell : Cell) -> std::io::Result<u32> {
+        let cell_child_grp = GroupHeader::read(reader, version)?;
+        assert_eq!(cell_child_grp.ty, "GRUP");
+
+        // Now we find the temporary children group (where LAND is always stored)
+
+        let mut temp_child = GroupHeader::read(reader, version)?;
+        if temp_child.group_ty != 9 {
+            temp_child.skip_data(reader)?;
+
+            temp_child = GroupHeader::read(reader, version)?;
+        }
+        
+        assert_eq!(temp_child.ty, "GRUP");
+
+        let mut left_to_read = temp_child.total_size - GroupHeader::header_size(version);
+
+        while left_to_read > 0 {
+            let record_header = RecordHeader::read(reader, version)?;
+            if record_header.ty == "LAND" {
+                Land::read(reader, version, cell.clone(), &record_header)?;
+            } else {
+                record_header.skip_data(reader)?;
+            }
+
+            left_to_read -= (record_header.data_size as u32) + RecordHeader::header_size(version);
+        }
+        Ok(cell_child_grp.total_size)
+    }
+}
+
 pub trait DataHeader : Sized {
-    fn header_size() -> u32;
-    fn read(reader : &mut (impl Read + Seek)) -> Result<Self, std::io::Error>;
+    fn header_size(version : DataVersion) -> u32;
+    fn read(reader : &mut (impl Read + Seek), version : DataVersion) -> Result<Self, std::io::Error>;
     fn skip_data(&self, reader : &mut (impl Read + Seek)) -> std::io::Result<()>;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct RecordHeader {
     pub ty : String,
     pub data_size : u32,
     pub flags : u32,
     pub id : u32,
-    pub timestamp: u16,
-    pub version_control: u16,
-    pub internal_version : u16,
-    pub misc : u16,
+    pub timestamp: Option<u16>,
+    pub version_control: u32,
+    pub internal_version : Option<u16>,
+    pub misc : Option<u16>,
 }
 
 impl DataHeader for RecordHeader {
-    fn header_size() -> u32 {
-        24
+    fn header_size(version : DataVersion) -> u32 {
+        match version {
+            DataVersion::Skyrim => 24,
+            DataVersion::Oblivion => 20
+        }
     }
 
-    fn read(reader : &mut (impl Read + Seek)) -> Result<Self, std::io::Error> {
+    fn read(reader : &mut (impl Read + Seek), version : DataVersion) -> Result<Self, std::io::Error> {
         let mut buf : [u8; 4] = [0; 4];
         let mut buf16 : [u8; 2] = [0; 2];
 
@@ -50,21 +239,35 @@ impl DataHeader for RecordHeader {
         reader.read_exact(&mut buf)?;
         id = u32::from_le_bytes(buf);
 
-        let timestamp : u16;
-        reader.read_exact(&mut buf16)?;
-        timestamp = u16::from_le_bytes(buf16);
         
-        let version_control : u16;
-        reader.read_exact(&mut buf16)?;
-        version_control = u16::from_le_bytes(buf16);
+        let timestamp : Option<u16>;
+        let version_control : u32;
+        let internal_version : Option<u16>;
+        let misc : Option<u16>;
 
-        let internal_version : u16;
-        reader.read_exact(&mut buf16)?;
-        internal_version = u16::from_le_bytes(buf16);
+        match version {
+            DataVersion::Skyrim => {
+                reader.read_exact(&mut buf16)?;
+                timestamp = Some(u16::from_le_bytes(buf16));
+                
+                reader.read_exact(&mut buf16)?;
+                version_control = u16::from_le_bytes(buf16) as u32;
+        
+                reader.read_exact(&mut buf16)?;
+                internal_version = Some(u16::from_le_bytes(buf16));
+        
+                reader.read_exact(&mut buf16)?;
+                misc = Some(u16::from_le_bytes(buf16));
+            },
+            DataVersion::Oblivion => {
+                reader.read_exact(&mut buf)?;
+                version_control = u32::from_le_bytes(buf);
 
-        let misc : u16;
-        reader.read_exact(&mut buf16)?;
-        misc = u16::from_le_bytes(buf16);
+                timestamp = None;
+                internal_version = None;
+                misc = None;
+            }
+        };
 
         Ok(RecordHeader {
             ty,
@@ -86,22 +289,31 @@ impl DataHeader for RecordHeader {
 #[derive(Debug)]
 struct GroupHeader {
     pub ty : String,
+    pub header_size : u32,
     pub total_size : u32,
     pub label : [u8; 4],
     pub group_ty : i32,
-    pub timestamp : u16,
-    pub version_control : u16,
-    pub misc : u32
+    pub timestamp : Option<u16>,
+    pub version_control : u32,
+    pub misc : Option<u32>
 }
 
 impl DataHeader for GroupHeader {
-    fn header_size() -> u32 {
-        24
+    fn header_size(version : DataVersion) -> u32 {
+        match version {
+            DataVersion::Skyrim => 24,
+            DataVersion::Oblivion => 20
+        }
     }
 
-    fn read(reader : &mut (impl Read + Seek)) -> Result<Self, std::io::Error> {
+    fn read(reader : &mut (impl Read + Seek), version : DataVersion) -> Result<Self, std::io::Error> {
         let mut buf : [u8; 4] = [0; 4];
         let mut buf16 : [u8; 2] = [0; 2];
+
+        let header_size = match version {
+            DataVersion::Oblivion => 20,
+            DataVersion::Skyrim => 24,
+        };
 
         let ty : String;
         reader.read_exact(&mut buf)?;
@@ -119,21 +331,35 @@ impl DataHeader for GroupHeader {
         reader.read_exact(&mut buf)?;
         group_ty = i32::from_le_bytes(buf);
 
-        let timestamp : u16;
-        reader.read_exact(&mut buf16)?;
-        timestamp = u16::from_le_bytes(buf16);
         
-        let version_control : u16;
-        reader.read_exact(&mut buf16)?;
-        version_control = u16::from_le_bytes(buf16);
+        let timestamp : Option<u16>;
+        let version_control : u32;
+        let misc : Option<u32>;
 
-        let misc : u32;
-        reader.read_exact(&mut buf)?;
-        misc = u32::from_le_bytes(buf);
+        match version {
+            DataVersion::Skyrim => {
+                reader.read_exact(&mut buf16)?;
+                timestamp = Some(u16::from_le_bytes(buf16));
+                
+                reader.read_exact(&mut buf16)?;
+                version_control = u16::from_le_bytes(buf16) as u32;
+        
+                reader.read_exact(&mut buf)?;
+                misc = Some(u32::from_le_bytes(buf));
+            },
+            DataVersion::Oblivion => {
+                reader.read_exact(&mut buf)?;
+                version_control = u32::from_le_bytes(buf);
+
+                timestamp = None;
+                misc = None;
+            }
+        }
 
         Ok(GroupHeader {
             ty,
             total_size,
+            header_size,
             label,
             group_ty,
             timestamp,
@@ -143,7 +369,7 @@ impl DataHeader for GroupHeader {
     }
 
     fn skip_data(&self, reader : &mut (impl Read + Seek)) -> std::io::Result<()> {
-        reader.seek_relative((self.total_size - GroupHeader::header_size()).into())
+        reader.seek_relative((self.total_size - self.header_size).into())
     }
 }
 
@@ -154,11 +380,12 @@ struct FieldHeader {
 }
 
 impl DataHeader for FieldHeader {
-    fn header_size() -> u32 {
+    fn header_size(_version : DataVersion) -> u32 {
         6
     }
 
-    fn read(reader : &mut (impl Read + Seek)) -> Result<Self, std::io::Error> {
+    // Data version does not matter for fields.
+    fn read(reader : &mut (impl Read + Seek), _version : DataVersion) -> Result<Self, std::io::Error> {
         let mut buf : [u8; 4] = [0; 4];
         let mut buf16 : [u8; 2] = [0; 2];
 
@@ -193,219 +420,58 @@ pub struct Land {
 	pub height_gradient : Vec<i8>,
 }
 
-fn read_land(cell : Cell, land : &RecordHeader, reader : &mut (impl Read + Seek)) -> std::io::Result<()> {
-	let mut buf : [u8; 4] = [0; 4];
-
-    reader.read_exact(&mut buf)?;
-    let decrypted_size = u32::from_le_bytes(buf);
-
-    // Subtract the 4 bytes we just read:
-    let compressed_chunk = reader.take((land.data_size as u64) - (4 as u64));
-
-    let mut out_land = Vec::with_capacity(decrypted_size.try_into().unwrap());
-
-    ZlibDecoder::new(compressed_chunk).read_to_end(&mut out_land)?;
-
-    let mut land_cursor = Cursor::new(out_land);
-
-	let mut left_to_read = decrypted_size;
-
-	while left_to_read > 0 {
-		let field = FieldHeader::read(&mut land_cursor)?;
-
-		if field.ty == "VHGT" {
-			land_cursor.read_exact(&mut buf)?;
-
-			// Based on https://en.uesp.net/wiki/Skyrim_Mod:Mod_File_Format/LAND
-			let offset_height = f32::from_le_bytes(buf);
-
-			let mut height_gradient = Vec::with_capacity(1089);
-
-			let mut byte : [u8; 1] = [0; 1];
-
-			for _ in 0..1089 {
-				land_cursor.read_exact(&mut byte)?;
-
-				let height_byte = i8::from_le_bytes(byte);
-
-				height_gradient.push(height_byte);
-			}
-
-            parse_land(Land {
-                cell,
-                offset_height,
-                height_gradient
-            });
-			break;
-		} else {
-			field.skip_data(&mut land_cursor)?;
-		}
-
-		left_to_read -= field.size as u32 + FieldHeader::header_size();
-	}
-
-	Ok(())
-}
-
-/// Returns bytes read.
-fn read_cell_refs(cell : Cell, reader : &mut Cursor<Vec<u8>>) -> std::io::Result<u32> {
-    let cell_child_grp = GroupHeader::read(reader)?;
-    assert_eq!(cell_child_grp.ty, "GRUP");
-
-    // Now we find the temporary children group (where LAND is always stored)
-
-    let mut temp_child = GroupHeader::read(reader)?;
-    if temp_child.group_ty != 9 {
-        temp_child.skip_data(reader)?;
-
-        temp_child = GroupHeader::read(reader)?;
-    }
-    
-    assert_eq!(temp_child.ty, "GRUP");
-
-    let mut left_to_read = temp_child.total_size - GroupHeader::header_size();
-
-    while left_to_read > 0 {
-        let record_header = RecordHeader::read(reader)?;
-        if record_header.ty == "LAND" {
-			read_land(cell.clone(), &record_header, reader)?;
-        } else {
-            record_header.skip_data(reader)?;
-        }
-
-        left_to_read -= (record_header.data_size as u32) + RecordHeader::header_size();
-    }
-    Ok(cell_child_grp.total_size)
-}
-
-/// Returns bytes read.
-fn read_cell(cell : RecordHeader, mut reader : Cursor<Vec<u8>>) -> std::io::Result<(u32, Cell)> {
-    // If the cell is compressed:
-    reader = if cell.flags & 0x00040000 == 0x00040000 {
+impl Land {
+    pub(self) fn read(reader : &mut (impl Read + Seek), version : DataVersion, cell : Cell, land : &RecordHeader) -> std::io::Result<()> {
         let mut buf : [u8; 4] = [0; 4];
-        reader.read_exact(&mut buf)?;
 
+        reader.read_exact(&mut buf)?;
         let decrypted_size = u32::from_le_bytes(buf);
     
-        let mut out_cell = vec![0; decrypted_size as usize];
+        // Subtract the 4 bytes we just read:
+        let compressed_chunk = reader.take((land.data_size as u64) - (4 as u64));
     
-        ZlibDecoder::new(reader).read_to_end(&mut out_cell)?;
+        let mut out_land = Vec::with_capacity(decrypted_size.try_into().unwrap());
     
-        Cursor::new(out_cell)
-    } else {
-        reader
-    };
+        ZlibDecoder::new(compressed_chunk).read_to_end(&mut out_land)?;
     
-    let x : i32;
-    let y : i32;
-
-    loop {
-        let field = FieldHeader::read(&mut reader)?;
-        // Cell location:
-        if field.ty == "XCLC" {
-            let mut buf : [u8; 4] = [0; 4];
-
-            reader.read_exact(&mut buf)?;
-            x = i32::from_le_bytes(buf);
-
-            reader.read_exact(&mut buf)?;
-            y = i32::from_le_bytes(buf);
-            break;
-        } else {
-            field.skip_data(&mut reader)?;
-            continue;
-        }
-    }
-    let total_read = read_cell_refs(Cell {x, y}, &mut reader)? + cell.data_size + RecordHeader::header_size();
+        let mut land_cursor = Cursor::new(out_land);
     
-    Ok((total_read, Cell{x, y}))
-}
-
-fn grab_world_children(buf_reader : &mut BufReader<File>) -> Result<GroupHeader, std::io::Error> {
-    let tes4 = RecordHeader::read(buf_reader)?;
-
-    assert_eq!(tes4.ty, "TES4");
-
-    buf_reader.seek(SeekFrom::Current(tes4.data_size.into()))?;
-
-    let mut group : GroupHeader;
-
-    loop {
-        group = GroupHeader::read(buf_reader)?;
-        let label = str::from_utf8(&group.label).unwrap();
-        if label == "WRLD" {
-            break;
-        }
-        group.skip_data(buf_reader)?;
-    }
+        let mut left_to_read = decrypted_size;
     
-    let world_record = RecordHeader::read(buf_reader)?;
-
-    assert_eq!(world_record.ty, "WRLD");
-
-    // We know this is EDID
-    let edid = FieldHeader::read(buf_reader)?;
-
-    let mut world_string_buf : Vec<u8> = Vec::new();
-    buf_reader.read_until(b'\0', &mut world_string_buf)?;
-    let world_string = String::from_utf8(world_string_buf).unwrap();
-    assert_eq!(world_string, String::from("Tamriel\0"));
-
-    buf_reader.seek_relative((world_record.data_size - u32::from(edid.size) - FieldHeader::header_size()).into())?;
-
-    // World Children group:
-    let group = GroupHeader::read(buf_reader)?;
-
-    Ok(group)
-}
-
-pub fn read_esm(reader : &mut BufReader<File>) -> std::io::Result<()> {
-	let world_group = grab_world_children(reader)?;
-
-    // Read the first cell and its children:
-    let first_world_cell = RecordHeader::read(reader)?;
-
-    let mut cell_buf = vec![0; first_world_cell.data_size as usize];
-    reader.read_exact(&mut cell_buf)?;
-
-    let (cell_total_read, _) = read_cell(first_world_cell, Cursor::new(cell_buf))?;
-
-    let mut world_bytes_left = world_group.total_size - (GroupHeader::header_size() + cell_total_read);
-
-    let bar = ProgressBar::new(11186);
-    bar.set_style(ProgressStyle::with_template("[{elapsed_precise}] {bar:100} {msg}").unwrap());
-
-    while world_bytes_left > 0 {
-        let block = GroupHeader::read(reader)?;
-
-        let mut block_left_to_read = block.total_size - GroupHeader::header_size();
-        
-        while block_left_to_read > 0 {
-            let subblock = GroupHeader::read(reader)?;
-
-            let mut subblock_left_to_read = subblock.total_size - GroupHeader::header_size();
-
-            while subblock_left_to_read > 0 {
-                let cell = RecordHeader::read(reader)?;
-
-                let mut record_buf = vec![0; cell.data_size as usize];
-                
-                reader.read_exact(&mut record_buf)?;
-                
-                subblock_left_to_read -= cell.data_size;
-
-                rayon::spawn(move || { 
-                    read_cell(cell, Cursor::new(record_buf)).expect("Could not read cell.");
+        while left_to_read > 0 {
+            let field = FieldHeader::read(&mut land_cursor, version)?;
+    
+            if field.ty == "VHGT" {
+                land_cursor.read_exact(&mut buf)?;
+    
+                // Based on https://en.uesp.net/wiki/Skyrim_Mod:Mod_File_Format/LAND
+                let offset_height = f32::from_le_bytes(buf);
+    
+                let mut height_gradient = Vec::with_capacity(1089);
+    
+                let mut byte : [u8; 1] = [0; 1];
+    
+                for _ in 0..1089 {
+                    land_cursor.read_exact(&mut byte)?;
+    
+                    let height_byte = i8::from_le_bytes(byte);
+    
+                    height_gradient.push(height_byte);
+                }
+    
+                parse_land(Land {
+                    cell,
+                    offset_height,
+                    height_gradient
                 });
-                
-                bar.inc(1);
+                break;
+            } else {
+                field.skip_data(&mut land_cursor)?;
             }
-
-            block_left_to_read -= subblock.total_size;
+    
+            left_to_read -= field.size as u32 + FieldHeader::header_size(version);
         }
-
-        world_bytes_left -= block.total_size;
+    
+        Ok(())
     }
-
-	Ok(())
 }
