@@ -68,17 +68,20 @@ impl<'a> ESMReader<'a> {
         let world_group = esm_reader.grab_world_children().expect("Could not grab world children.");
 
         // If we're in Oblivion, the ROAD record is first:
-        if matches!(esm_reader.version, DataVersion::Oblivion) {
+        let road_read = if matches!(esm_reader.version, DataVersion::Oblivion) {
             let road = RecordHeader::read(esm_reader.reader, esm_reader.version).expect("Could not read road header.");
             road.skip_data(esm_reader.reader).expect("Could not skip ROAD record data.");
-        }
+            road.data_size + RecordHeader::header_size(esm_reader.version)
+        } else {
+            0
+        };
     
         // Read the first cell and its children:
         let first_world_cell = RecordHeader::read(esm_reader.reader, esm_reader.version).expect("Could not read record header.");
     
         let (cell_total_read, _) = ESMReader::read_cell(esm_reader.reader, esm_reader.version, first_world_cell).expect("Could not read cell.");
     
-        let mut world_bytes_left = world_group.total_size - (GroupHeader::header_size(esm_reader.version) + cell_total_read);
+        let mut world_bytes_left = world_group.total_size - (GroupHeader::header_size(esm_reader.version) + cell_total_read + road_read);
     
         let bar = ProgressBar::new(world_bytes_left as u64);
         bar.set_style(ProgressStyle::with_template("[{elapsed_precise}] {bar:100} {msg}").unwrap());
@@ -91,7 +94,6 @@ impl<'a> ESMReader<'a> {
             while block_left_to_read > 0 {
                 let subblock = GroupHeader::read(esm_reader.reader, esm_reader.version).expect("Could not read group header.");
                 
-                // TODO: Not reading this right somehow, resulting in overflow.
                 block_left_to_read -= subblock.total_size;
 
                 let mut subblock_buf = vec![0; (subblock.total_size - GroupHeader::header_size(esm_reader.version)) as usize];
