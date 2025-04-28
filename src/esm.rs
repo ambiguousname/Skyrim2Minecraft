@@ -21,10 +21,6 @@ pub struct ESMReader<'a> {
 
 impl<'a> ESMReader<'a> {
 
-    // fn field_header_size(&self) -> u32 {
-    //     6
-    // }
-
     fn grab_world_children(&mut self) -> Result<GroupHeader, std::io::Error> {
         let tes4 = RecordHeader::read(self.reader, self.version)?;
     
@@ -56,28 +52,34 @@ impl<'a> ESMReader<'a> {
         assert_eq!(world_string, String::from("Tamriel\0"));
     
         self.reader.seek_relative((world_record.data_size - u32::from(edid.size) - FieldHeader::header_size(self.version)).into())?;
-    
+        
         // World Children group:
         let group = GroupHeader::read(self.reader, self.version)?;
     
         Ok(group)
     }
 
-    pub fn read(version : DataVersion, reader : &'a mut BufReader<File>) -> std::io::Result<()> {
+    pub fn read(version : DataVersion, reader : &'a mut BufReader<File>) {
         let mut esm_reader = Self {
             version,
             reader
         };
 
-        let world_group = esm_reader.grab_world_children()?;
+        let world_group = esm_reader.grab_world_children().expect("Could not grab world children.");
+
+        // If we're in Oblivion, the ROAD record is first:
+        if matches!(esm_reader.version, DataVersion::Oblivion) {
+            let road = RecordHeader::read(esm_reader.reader, esm_reader.version).expect("Could not read road header.");
+            road.skip_data(esm_reader.reader).expect("Could not skip ROAD record data.");
+        }
     
         // Read the first cell and its children:
-        let first_world_cell = RecordHeader::read(esm_reader.reader, esm_reader.version)?;
+        let first_world_cell = RecordHeader::read(esm_reader.reader, esm_reader.version).expect("Could not read record header.");
     
         let mut cell_buf = vec![0; first_world_cell.data_size as usize];
-        esm_reader.reader.read_exact(&mut cell_buf)?;
+        esm_reader.reader.read_exact(&mut cell_buf).expect("Could not read cell buffer.");
     
-        let (cell_total_read, _) = ESMReader::read_cell(Cursor::new(cell_buf), esm_reader.version, first_world_cell)?;
+        let (cell_total_read, _) = ESMReader::read_cell(Cursor::new(cell_buf), esm_reader.version, first_world_cell).expect("Could not read cell.");
     
         let mut world_bytes_left = world_group.total_size - (GroupHeader::header_size(esm_reader.version) + cell_total_read);
     
@@ -85,21 +87,21 @@ impl<'a> ESMReader<'a> {
         bar.set_style(ProgressStyle::with_template("[{elapsed_precise}] {bar:100} {msg}").unwrap());
     
         while world_bytes_left > 0 {
-            let block = GroupHeader::read(esm_reader.reader, esm_reader.version)?;
+            let block = GroupHeader::read(esm_reader.reader, esm_reader.version).expect("Could not read group header.");
     
             let mut block_left_to_read = block.total_size - GroupHeader::header_size(esm_reader.version);
             
             while block_left_to_read > 0 {
-                let subblock = GroupHeader::read(esm_reader.reader, esm_reader.version)?;
+                let subblock = GroupHeader::read(esm_reader.reader, esm_reader.version).expect("Could not read group header.");
     
                 let mut subblock_left_to_read = subblock.total_size - GroupHeader::header_size(esm_reader.version);
     
                 while subblock_left_to_read > 0 {
-                    let cell = RecordHeader::read(esm_reader.reader, esm_reader.version)?;
+                    let cell = RecordHeader::read(esm_reader.reader, esm_reader.version).expect("Could not read record header.");
     
                     let mut record_buf = vec![0; cell.data_size as usize];
                     
-                    esm_reader.reader.read_exact(&mut record_buf)?;
+                    esm_reader.reader.read_exact(&mut record_buf).expect("Could not read record.");
                     
                     subblock_left_to_read -= cell.data_size;
     
@@ -115,8 +117,6 @@ impl<'a> ESMReader<'a> {
     
             world_bytes_left -= block.total_size;
         }
-    
-        Ok(())
     }
 
     /// Returns bytes read.
@@ -157,7 +157,7 @@ impl<'a> ESMReader<'a> {
                 continue;
             }
         }
-        let total_read = ESMReader::read_cell_refs(&mut reader, version, Cell {x, y})? + cell.data_size + RecordHeader::header_size(version);
+        let total_read = ESMReader::read_cell_refs(&mut reader, version, Cell {x, y}).expect("Could not read cell refs.") + cell.data_size + RecordHeader::header_size(version);
         
         Ok((total_read, Cell{x, y}))
     }

@@ -23,5 +23,5 @@ fn main() {
     let skyrim = File::open(args.file).unwrap();
 
     let mut buf_reader = BufReader::new(skyrim);
-    esm::ESMReader::read(args.data_version, &mut buf_reader).unwrap();
+    esm::ESMReader::read(args.data_version, &mut buf_reader);
 }
