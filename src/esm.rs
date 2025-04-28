@@ -76,10 +76,7 @@ impl<'a> ESMReader<'a> {
         // Read the first cell and its children:
         let first_world_cell = RecordHeader::read(esm_reader.reader, esm_reader.version).expect("Could not read record header.");
     
-        let mut cell_buf = vec![0; first_world_cell.data_size as usize];
-        esm_reader.reader.read_exact(&mut cell_buf).expect("Could not read cell buffer.");
-    
-        let (cell_total_read, _) = ESMReader::read_cell(Cursor::new(cell_buf), esm_reader.version, first_world_cell).expect("Could not read cell.");
+        let (cell_total_read, _) = ESMReader::read_cell(esm_reader.reader, esm_reader.version, first_world_cell).expect("Could not read cell.");
     
         let mut world_bytes_left = world_group.total_size - (GroupHeader::header_size(esm_reader.version) + cell_total_read);
     
@@ -99,17 +96,15 @@ impl<'a> ESMReader<'a> {
                 while subblock_left_to_read > 0 {
                     let cell = RecordHeader::read(esm_reader.reader, esm_reader.version).expect("Could not read record header.");
     
-                    let mut record_buf = vec![0; cell.data_size as usize];
-                    
-                    esm_reader.reader.read_exact(&mut record_buf).expect("Could not read record.");
-                    
-                    subblock_left_to_read -= cell.data_size;
-    
-                    rayon::spawn(move || { 
-                        ESMReader::read_cell(Cursor::new(record_buf), esm_reader.version, cell).expect("Could not read cell.");
-                    });
+                    // TODO: Don't think this is async, cells don't have a record of their length.
+                    // rayon::spawn(move || { 
+                    let (left, c) = ESMReader::read_cell(esm_reader.reader, esm_reader.version, cell).expect("Could not read cell.");
+                    // });
                     
                     bar.inc(1);
+                    bar.set_message(format!("{},{}", c.x, c.y));
+
+                    subblock_left_to_read -= left;
                 }
     
                 block_left_to_read -= subblock.total_size;
@@ -120,50 +115,54 @@ impl<'a> ESMReader<'a> {
     }
 
     /// Returns bytes read.
-    fn read_cell(mut reader : Cursor<Vec<u8>>, version : DataVersion, cell : RecordHeader) -> std::io::Result<(u32, Cell)> {
+    fn read_cell(reader : &mut (impl Read + Seek), version : DataVersion, cell : RecordHeader) -> std::io::Result<(u32, Cell)> {
+        let mut chunk = reader.take(cell.data_size as u64);
+
         // If the cell is compressed:
-        let mut reader = if cell.flags & 0x00040000 == 0x00040000 {
+        let mut r = if cell.flags & 0x00040000 == 0x00040000 {
             let mut buf : [u8; 4] = [0; 4];
-            reader.read_exact(&mut buf)?;
+            chunk.read_exact(&mut buf)?;
 
             let decrypted_size = u32::from_le_bytes(buf);
         
             let mut out_cell = vec![0; decrypted_size as usize];
         
-            ZlibDecoder::new(reader).read_to_end(&mut out_cell)?;
+            ZlibDecoder::new(chunk).read_to_end(&mut out_cell)?;
         
             Cursor::new(out_cell)
         } else {
-            reader
+            let mut out = Vec::with_capacity(cell.data_size as usize);
+            chunk.read_to_end(&mut out)?;
+            Cursor::new(out)
         };
         
         let x : i32;
         let y : i32;
 
         loop {
-            let field = FieldHeader::read(&mut reader, version)?;
+            let field = FieldHeader::read(&mut r, version)?;
             // Cell location:
             if field.ty == "XCLC" {
                 let mut buf : [u8; 4] = [0; 4];
 
-                reader.read_exact(&mut buf)?;
+                r.read_exact(&mut buf)?;
                 x = i32::from_le_bytes(buf);
 
-                reader.read_exact(&mut buf)?;
+                r.read_exact(&mut buf)?;
                 y = i32::from_le_bytes(buf);
                 break;
             } else {
-                field.skip_data(&mut reader)?;
+                field.skip_data(&mut r)?;
                 continue;
             }
         }
-        let total_read = ESMReader::read_cell_refs(&mut reader, version, Cell {x, y}).expect("Could not read cell refs.") + cell.data_size + RecordHeader::header_size(version);
+        let total_read = ESMReader::read_cell_refs(reader, version, Cell {x, y}).expect("Could not read cell refs.") + cell.data_size + RecordHeader::header_size(version);
         
         Ok((total_read, Cell{x, y}))
     }
 
     /// Returns bytes read.
-    fn read_cell_refs(reader : &mut Cursor<Vec<u8>>, version : DataVersion, cell : Cell) -> std::io::Result<u32> {
+    fn read_cell_refs(reader : &mut (impl Read + Seek), version : DataVersion, cell : Cell) -> std::io::Result<u32> {
         let cell_child_grp = GroupHeader::read(reader, version)?;
         assert_eq!(cell_child_grp.ty, "GRUP");
 
