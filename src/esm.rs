@@ -80,7 +80,7 @@ impl<'a> ESMReader<'a> {
     
         let mut world_bytes_left = world_group.total_size - (GroupHeader::header_size(esm_reader.version) + cell_total_read);
     
-        let bar = ProgressBar::new(11186);
+        let bar = ProgressBar::new(world_bytes_left as u64);
         bar.set_style(ProgressStyle::with_template("[{elapsed_precise}] {bar:100} {msg}").unwrap());
     
         while world_bytes_left > 0 {
@@ -101,8 +101,8 @@ impl<'a> ESMReader<'a> {
                     let (left, c) = ESMReader::read_cell(esm_reader.reader, esm_reader.version, cell).expect("Could not read cell.");
                     // });
                     
-                    bar.inc(1);
                     bar.set_message(format!("{},{}", c.x, c.y));
+                    bar.inc(left as u64);
 
                     subblock_left_to_read -= left;
                 }
