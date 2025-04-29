@@ -265,7 +265,8 @@ pub fn parse_land(land : Land) {
 	}
 
 	let region_name = format!("r.{curr_region_x}.{curr_region_y}.mca");
-	let region_path = Path::new(&region_name);
+	let region_path_name = format!("./gen/{}", region_name);
+	let region_path = Path::new(&region_path_name);
 	
 	let region_exists = region_path.exists();
 

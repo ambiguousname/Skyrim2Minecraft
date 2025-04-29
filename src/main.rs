@@ -22,6 +22,13 @@ fn main() {
 
     let skyrim = File::open(args.file).unwrap();
 
+    // TODO: Customize, this is also set in world_gen
+    let out_dir = std::path::Path::new("./gen");
+    
+	if !out_dir.exists() {
+		std::fs::create_dir_all(out_dir).expect("Could not create gen directory.");
+	}
+
     let mut buf_reader = BufReader::new(skyrim);
     esm::ESMReader::read(args.data_version, &mut buf_reader);
 }
