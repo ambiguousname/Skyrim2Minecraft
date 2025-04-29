@@ -7,3 +7,9 @@
 6. Note that this program assumes that it can generate blocks anywhere from y-level `-592` to `624`, so you may need to use a datapack to increase the y-limit of the overworld! Or just [download the custom world](https://drive.proton.me/urls/HVWNDC03T0#VKyc404VoD40). 
 
 Please note that this program has only been tested with Skyrim: Special Edition, it may not work on older versions.
+
+# Possible Improvements
+- Water Height mapping
+- Coloring terrain
+- Averaging heights
+- Improve speed of chunk writing (it's definitely a bottleneck, but need to profile)

@@ -4,6 +4,7 @@ use std::{fs::File, io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom}, rc::
 use clap::ValueEnum;
 use flate2::read::ZlibDecoder;
 use indicatif::{ProgressBar, ProgressStyle};
+use rayon::ThreadPoolBuilder;
 
 use crate::world_gen::parse_land;
 
@@ -85,34 +86,43 @@ impl<'a> ESMReader<'a> {
     
         let bar = ProgressBar::new(world_bytes_left as u64);
         bar.set_style(ProgressStyle::with_template("[{elapsed_precise}] {bar:100} {msg}").unwrap());
+
+        let pool = ThreadPoolBuilder::new().thread_name(|i| {
+            format!("Subgroup Reader {i}")
+        }).build().unwrap();
     
-        while world_bytes_left > 0 {
-            let block = GroupHeader::read(esm_reader.reader, esm_reader.version).expect("Could not read group header.");
-    
-            let mut block_left_to_read = block.total_size - GroupHeader::header_size(esm_reader.version);
-            
-            while block_left_to_read > 0 {
-                let subblock = GroupHeader::read(esm_reader.reader, esm_reader.version).expect("Could not read group header.");
+        // Because the only dependency for spawning threads is that we have to read the next chunk of bytes,
+        // we can only demand that threads finish once we're done reading the whole file. Hence the scope call:
+        pool.scope(|scope| {
+            while world_bytes_left > 0 {
+                let block = GroupHeader::read(esm_reader.reader, esm_reader.version).expect("Could not read group header.");
                 
-                block_left_to_read -= subblock.total_size;
+                let mut block_left_to_read = block.total_size - GroupHeader::header_size(esm_reader.version);
+                
+                while block_left_to_read > 0 {
+                    let subblock = GroupHeader::read(esm_reader.reader, esm_reader.version).expect("Could not read group header.");
+                    
+                    block_left_to_read -= subblock.total_size;
 
-                let mut subblock_buf = vec![0; (subblock.total_size - GroupHeader::header_size(esm_reader.version)) as usize];
+                    let mut subblock_buf = vec![0; (subblock.total_size - GroupHeader::header_size(esm_reader.version)) as usize];
 
-                esm_reader.reader.read_exact(&mut subblock_buf).expect("Could not read subblock.");
+                    esm_reader.reader.read_exact(&mut subblock_buf).expect("Could not read subblock.");
 
-                let bar = bar.clone();
-
-                rayon::spawn(move || {
-                    ESMReader::read_subblock(Cursor::new(subblock_buf), esm_reader.version, subblock, bar);
-                });
+                    let bar = bar.clone();
+                    // Then, because each CELL record is of indeterminate size, we just treat each subblock read as its own thread:
+                    scope.spawn(move |_| {
+                        ESMReader::read_subblock(subblock_buf, esm_reader.version, subblock, bar);
+                    });
+                }
+        
+                world_bytes_left -= block.total_size;
             }
-    
-            world_bytes_left -= block.total_size;
-        }
+        });
     }
 
-    fn read_subblock(mut reader : Cursor<Vec<u8>>, version : DataVersion, subblock : GroupHeader, bar : ProgressBar) {
-    
+    fn read_subblock(buf : Vec<u8>, version : DataVersion, subblock : GroupHeader, bar : ProgressBar) {
+        let mut reader = Cursor::new(buf);
+
         let mut subblock_left_to_read = subblock.total_size - GroupHeader::header_size(version);
 
         while subblock_left_to_read > 0 {
