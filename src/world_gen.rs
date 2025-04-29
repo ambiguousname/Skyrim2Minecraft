@@ -137,12 +137,12 @@ impl Chunk {
 		let mut i = start_height;
 		while i < end_height {
 			let curr_y = i as i32;
-			let matching_section = self.sections.iter_mut().find(|s| {
-				s.y == (curr_y >> 4) as i8
-			});
+
+			let next_idx : usize = (((curr_y - MIN_Y) >> 4) as i8).try_into().expect("Could not convert index.");
+			let matching_section = self.sections.get_mut(next_idx);
 			
-			let section = if matching_section.is_some() {
-				matching_section.unwrap()
+			let section = if let Some(s) = matching_section {
+				s
 			} else {
 				self.sections.push(Section{
 					y: (curr_y >> 4) as i8,
@@ -262,6 +262,8 @@ pub fn parse_land(land : Land) {
 		chunk.draw_height(block_x + 1, block_z, start_height, end_height, 2);
 		chunk.draw_height(block_x, block_z + 1, start_height, end_height, 2);
 		chunk.draw_height(block_x + 1, block_z + 1, start_height, end_height, 2);
+
+		// println!("{:?}", chunk.sections.len());
 	}
 
 	let region_name = format!("r.{curr_region_x}.{curr_region_y}.mca");
