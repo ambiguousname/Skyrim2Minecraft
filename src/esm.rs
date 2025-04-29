@@ -131,6 +131,7 @@ impl<'a> ESMReader<'a> {
             let (left, c) = ESMReader::read_cell(&mut reader, version, cell).expect("Could not read cell.");
             
             bar.set_message(format!("{},{}", c.x, c.y));
+            // Not exactly accurate for going up to 100% (we miss counting a lot of the headers for groups), but the files are so big I think this is okay:
             bar.inc(left as u64);
 
             subblock_left_to_read -= left;
