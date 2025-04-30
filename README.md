@@ -11,5 +11,9 @@ Please note that this program has only been tested with Skyrim: Special Edition 
 # Possible Improvements
 - Water Height mapping
 - Coloring terrain
+	- VCLR data
+	- Texture sampling
 - Averaging heights
+	- Add slabs
+- Add stairs based on vertex normals
 - Improve speed of chunk writing (it's definitely a bottleneck, but need to profile)
