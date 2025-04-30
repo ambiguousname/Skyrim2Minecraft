@@ -142,7 +142,7 @@ impl Chunk {
 		while i < end_height {
 			let curr_y = i as i32;
 
-			let next_idx : usize = (((curr_y - MIN_Y) >> 4) as i8).try_into().expect("Could not convert index.");
+			let next_idx : usize = (((curr_y - MIN_Y) >> 4) as i8).try_into().expect(&format!("Could not convert index {curr_y}."));
 			let matching_section = self.sections.get_mut(next_idx);
 			
 			let section = if let Some(s) = matching_section {
