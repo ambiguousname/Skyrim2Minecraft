@@ -225,7 +225,8 @@ pub fn parse_land(land : Land, out_folder : &Path) {
 	let mut row_offset : f32 = 0.0;
 	let mut curr_offset = land.offset_height;
 
-	let water_height = land.cell.water_height.map(|h| { h/8.0 });
+	// TODO: Is this conversion right?
+	let water_height = land.cell.water_height.map(|h| { h/64.0 });
 
 	for (i, v) in land.height_gradient.iter().enumerate() {
 		let r = i / 33;
@@ -279,7 +280,7 @@ pub fn parse_land(land : Land, out_folder : &Path) {
 
 		if let Some(h) = water_height {
 			if h > end_height {
-				// FIXME: Not sure we account for slight block offsets like this:
+				// FIXME: Not sure we account for slight block offsets like this, see line 168:
 				let start = end_height + 1.0;
 				chunk.draw_height(block_x, block_z, start, h, 3);
 				chunk.draw_height(block_x + 1, block_z, start, h, 3);
@@ -287,8 +288,6 @@ pub fn parse_land(land : Land, out_folder : &Path) {
 				chunk.draw_height(block_x + 1, block_z + 1, start, h, 3);
 			}
 		}
-
-		// println!("{:?}", chunk.sections.len());
 	}
 
 	let region_name = format!("r.{curr_region_x}.{curr_region_y}.mca");
