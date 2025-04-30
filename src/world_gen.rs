@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::{File, OpenOptions}, io::{Seek, Write}, path::Path};
+use std::{collections::HashMap, fs::{File, OpenOptions}, io::Seek, path::Path};
 
 use serde::Serialize;
 
@@ -186,7 +186,7 @@ impl Default for Chunk {
 	}
 }
 
-pub fn parse_land(land : Land) {
+pub fn parse_land(land : Land, out_folder : &Path) {
 	// Order of operations:
 	// Deduce region ranges and chunk ranges from Cell coordinates.
 	// Write height data to these chunk ranges.
@@ -267,8 +267,7 @@ pub fn parse_land(land : Land) {
 	}
 
 	let region_name = format!("r.{curr_region_x}.{curr_region_y}.mca");
-	let region_path_name = format!("./gen/{}", region_name);
-	let region_path = Path::new(&region_path_name);
+	let region_path = out_folder.join(region_name);
 	
 	let region_exists = region_path.exists();
 

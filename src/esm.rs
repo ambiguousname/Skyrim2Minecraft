@@ -1,5 +1,5 @@
 use core::str;
-use std::{fs::File, io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom}, rc::Rc};
+use std::{fs::File, io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom}, path::Path};
 
 use clap::ValueEnum;
 use flate2::read::ZlibDecoder;
@@ -15,15 +15,21 @@ pub enum DataVersion {
     Oblivion
 }
 
-pub struct ESMReader<'a> {
+#[derive(Debug, Clone, Copy)]
+pub struct ESMInfo<'a> {
     version : DataVersion,
+    out_folder : &'a Path
+}
+
+pub struct ESMReader<'a> {
+    info : ESMInfo<'a>,
     reader : &'a mut BufReader<File>,
 }
 
 impl<'a> ESMReader<'a> {
 
     fn grab_world_children(&mut self) -> Result<GroupHeader, std::io::Error> {
-        let tes4 = RecordHeader::read(self.reader, self.version)?;
+        let tes4 = RecordHeader::read(self.reader, self.info.version)?;
     
         assert_eq!(tes4.ty, "TES4");
     
@@ -32,7 +38,7 @@ impl<'a> ESMReader<'a> {
         let mut group : GroupHeader;
     
         loop {
-            group = GroupHeader::read(self.reader, self.version)?;
+            group = GroupHeader::read(self.reader, self.info.version)?;
             let label = str::from_utf8(&group.label).unwrap();
             if label == "WRLD" {
                 break;
@@ -40,49 +46,54 @@ impl<'a> ESMReader<'a> {
             group.skip_data(self.reader)?;
         }
         
-        let world_record = RecordHeader::read(self.reader, self.version)?;
+        let world_record = RecordHeader::read(self.reader, self.info.version)?;
     
         assert_eq!(world_record.ty, "WRLD");
     
         // We know this is EDID
-        let edid = FieldHeader::read(self.reader, self.version)?;
+        let edid = FieldHeader::read(self.reader, self.info.version)?;
     
         let mut world_string_buf : Vec<u8> = Vec::new();
         self.reader.read_until(b'\0', &mut world_string_buf)?;
         let world_string = String::from_utf8(world_string_buf).unwrap();
         assert_eq!(world_string, String::from("Tamriel\0"));
     
-        self.reader.seek_relative((world_record.data_size - u32::from(edid.size) - FieldHeader::header_size(self.version)).into())?;
+        self.reader.seek_relative((world_record.data_size - u32::from(edid.size) - FieldHeader::header_size(self.info.version)).into())?;
         
         // World Children group:
-        let group = GroupHeader::read(self.reader, self.version)?;
+        let group = GroupHeader::read(self.reader, self.info.version)?;
     
         Ok(group)
     }
 
-    pub fn read(version : DataVersion, reader : &'a mut BufReader<File>) {
-        let mut esm_reader = Self {
+    pub fn read(version : DataVersion, reader : &'a mut BufReader<File>, out_dir : &'a Path) {
+        let info = ESMInfo {
             version,
+            out_folder: out_dir
+        };
+        
+        let mut esm_reader = Self {
+            info,
             reader
         };
 
         let world_group = esm_reader.grab_world_children().expect("Could not grab world children.");
 
         // If we're in Oblivion, the ROAD record is first:
-        let road_read = if matches!(esm_reader.version, DataVersion::Oblivion) {
-            let road = RecordHeader::read(esm_reader.reader, esm_reader.version).expect("Could not read road header.");
+        let road_read = if matches!(esm_reader.info.version, DataVersion::Oblivion) {
+            let road = RecordHeader::read(esm_reader.reader, esm_reader.info.version).expect("Could not read road header.");
             road.skip_data(esm_reader.reader).expect("Could not skip ROAD record data.");
-            road.data_size + RecordHeader::header_size(esm_reader.version)
+            road.data_size + RecordHeader::header_size(esm_reader.info.version)
         } else {
             0
         };
     
         // Read the first cell and its children:
-        let first_world_cell = RecordHeader::read(esm_reader.reader, esm_reader.version).expect("Could not read record header.");
+        let first_world_cell = RecordHeader::read(esm_reader.reader, esm_reader.info.version).expect("Could not read record header.");
     
-        let (cell_total_read, _) = ESMReader::read_cell(esm_reader.reader, esm_reader.version, first_world_cell).expect("Could not read cell.");
+        let (cell_total_read, _) = ESMReader::read_cell(esm_reader.reader, esm_reader.info, first_world_cell).expect("Could not read cell.");
     
-        let mut world_bytes_left = world_group.total_size - (GroupHeader::header_size(esm_reader.version) + cell_total_read + road_read);
+        let mut world_bytes_left = world_group.total_size - (GroupHeader::header_size(esm_reader.info.version) + cell_total_read + road_read);
     
         let bar = ProgressBar::new(world_bytes_left as u64);
         bar.set_style(ProgressStyle::with_template("[{elapsed_precise}] {bar:100} {msg}").unwrap());
@@ -95,23 +106,23 @@ impl<'a> ESMReader<'a> {
         // we can only demand that threads finish once we're done reading the whole file. Hence the scope call:
         pool.scope(|scope| {
             while world_bytes_left > 0 {
-                let block = GroupHeader::read(esm_reader.reader, esm_reader.version).expect("Could not read group header.");
+                let block = GroupHeader::read(esm_reader.reader, esm_reader.info.version).expect("Could not read group header.");
                 
-                let mut block_left_to_read = block.total_size - GroupHeader::header_size(esm_reader.version);
+                let mut block_left_to_read = block.total_size - GroupHeader::header_size(esm_reader.info.version);
                 
                 while block_left_to_read > 0 {
-                    let subblock = GroupHeader::read(esm_reader.reader, esm_reader.version).expect("Could not read group header.");
+                    let subblock = GroupHeader::read(esm_reader.reader, esm_reader.info.version).expect("Could not read group header.");
                     
                     block_left_to_read -= subblock.total_size;
 
-                    let mut subblock_buf = vec![0; (subblock.total_size - GroupHeader::header_size(esm_reader.version)) as usize];
+                    let mut subblock_buf = vec![0; (subblock.total_size - GroupHeader::header_size(esm_reader.info.version)) as usize];
 
                     esm_reader.reader.read_exact(&mut subblock_buf).expect("Could not read subblock.");
 
                     let bar = bar.clone();
                     // Then, because each CELL record is of indeterminate size, we just treat each subblock read as its own thread:
                     scope.spawn(move |_| {
-                        ESMReader::read_subblock(subblock_buf, esm_reader.version, subblock, bar);
+                        ESMReader::read_subblock(subblock_buf, esm_reader.info, subblock, bar);
                     });
                 }
         
@@ -120,15 +131,15 @@ impl<'a> ESMReader<'a> {
         });
     }
 
-    fn read_subblock(buf : Vec<u8>, version : DataVersion, subblock : GroupHeader, bar : ProgressBar) {
+    fn read_subblock(buf : Vec<u8>, info : ESMInfo, subblock : GroupHeader, bar : ProgressBar) {
         let mut reader = Cursor::new(buf);
 
-        let mut subblock_left_to_read = subblock.total_size - GroupHeader::header_size(version);
+        let mut subblock_left_to_read = subblock.total_size - GroupHeader::header_size(info.version);
 
         while subblock_left_to_read > 0 {
-            let cell = RecordHeader::read(&mut reader, version).expect("Could not read record header.");
+            let cell = RecordHeader::read(&mut reader, info.version).expect("Could not read record header.");
 
-            let (left, c) = ESMReader::read_cell(&mut reader, version, cell).expect("Could not read cell.");
+            let (left, c) = ESMReader::read_cell(&mut reader, info, cell).expect("Could not read cell.");
             
             bar.set_message(format!("{},{}", c.x, c.y));
             // Not exactly accurate for going up to 100% (we miss counting a lot of the headers for groups), but the files are so big I think this is okay:
@@ -139,7 +150,7 @@ impl<'a> ESMReader<'a> {
     }
 
     /// Returns bytes read.
-    fn read_cell(reader : &mut (impl Read + Seek), version : DataVersion, cell : RecordHeader) -> std::io::Result<(u32, Cell)> {
+    fn read_cell(reader : &mut (impl Read + Seek), info : ESMInfo, cell : RecordHeader) -> std::io::Result<(u32, Cell)> {
         let mut chunk = reader.take(cell.data_size as u64);
 
         // If the cell is compressed:
@@ -164,7 +175,7 @@ impl<'a> ESMReader<'a> {
         let y : i32;
 
         loop {
-            let field = FieldHeader::read(&mut r, version)?;
+            let field = FieldHeader::read(&mut r, info.version)?;
             // Cell location:
             if field.ty == "XCLC" {
                 let mut buf : [u8; 4] = [0; 4];
@@ -180,38 +191,38 @@ impl<'a> ESMReader<'a> {
                 continue;
             }
         }
-        let total_read = ESMReader::read_cell_refs(reader, version, Cell {x, y}).expect("Could not read cell refs.") + cell.data_size + RecordHeader::header_size(version);
+        let total_read = ESMReader::read_cell_refs(reader, info, Cell {x, y}).expect("Could not read cell refs.") + cell.data_size + RecordHeader::header_size(info.version);
         
         Ok((total_read, Cell{x, y}))
     }
 
     /// Returns bytes read.
-    fn read_cell_refs(reader : &mut (impl Read + Seek), version : DataVersion, cell : Cell) -> std::io::Result<u32> {
-        let cell_child_grp = GroupHeader::read(reader, version)?;
+    fn read_cell_refs(reader : &mut (impl Read + Seek), info : ESMInfo, cell : Cell) -> std::io::Result<u32> {
+        let cell_child_grp = GroupHeader::read(reader, info.version)?;
         assert_eq!(cell_child_grp.ty, "GRUP");
 
         // Now we find the temporary children group (where LAND is always stored)
 
-        let mut temp_child = GroupHeader::read(reader, version)?;
+        let mut temp_child = GroupHeader::read(reader, info.version)?;
         if temp_child.group_ty != 9 {
             temp_child.skip_data(reader)?;
 
-            temp_child = GroupHeader::read(reader, version)?;
+            temp_child = GroupHeader::read(reader, info.version)?;
         }
         
         assert_eq!(temp_child.ty, "GRUP");
 
-        let mut left_to_read = temp_child.total_size - GroupHeader::header_size(version);
+        let mut left_to_read = temp_child.total_size - GroupHeader::header_size(info.version);
 
         while left_to_read > 0 {
-            let record_header = RecordHeader::read(reader, version)?;
+            let record_header = RecordHeader::read(reader, info.version)?;
             if record_header.ty == "LAND" {
-                Land::read(reader, version, cell.clone(), &record_header)?;
+                Land::read(reader, info, cell.clone(), &record_header)?;
             } else {
                 record_header.skip_data(reader)?;
             }
 
-            left_to_read -= (record_header.data_size as u32) + RecordHeader::header_size(version);
+            left_to_read -= (record_header.data_size as u32) + RecordHeader::header_size(info.version);
         }
         Ok(cell_child_grp.total_size)
     }
@@ -445,7 +456,7 @@ pub struct Land {
 }
 
 impl Land {
-    pub(self) fn read(reader : &mut (impl Read + Seek), version : DataVersion, cell : Cell, land : &RecordHeader) -> std::io::Result<()> {
+    pub(self) fn read(reader : &mut (impl Read + Seek), info : ESMInfo, cell : Cell, land : &RecordHeader) -> std::io::Result<()> {
         let mut buf : [u8; 4] = [0; 4];
 
         reader.read_exact(&mut buf)?;
@@ -463,7 +474,7 @@ impl Land {
         let mut left_to_read = decrypted_size;
     
         while left_to_read > 0 {
-            let field = FieldHeader::read(&mut land_cursor, version)?;
+            let field = FieldHeader::read(&mut land_cursor, info.version)?;
     
             if field.ty == "VHGT" {
                 land_cursor.read_exact(&mut buf)?;
@@ -487,13 +498,13 @@ impl Land {
                     cell,
                     offset_height,
                     height_gradient
-                });
+                }, info.out_folder);
                 break;
             } else {
                 field.skip_data(&mut land_cursor)?;
             }
     
-            left_to_read -= field.size as u32 + FieldHeader::header_size(version);
+            left_to_read -= field.size as u32 + FieldHeader::header_size(info.version);
         }
     
         Ok(())

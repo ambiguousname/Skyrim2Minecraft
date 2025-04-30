@@ -15,6 +15,9 @@ struct Args {
     /// ESM Data Version to use.
     #[arg(value_enum)]
     data_version : DataVersion,
+
+    #[arg(short, long)]
+    out_path : Option<PathBuf>,
 }
 
 fn main() {
@@ -23,12 +26,14 @@ fn main() {
     let skyrim = File::open(args.file).unwrap();
 
     // TODO: Customize, this is also set in world_gen
-    let out_dir = std::path::Path::new("./gen");
+    let out_dir = args.out_path.unwrap_or(PathBuf::from("./region"));
     
 	if !out_dir.exists() {
-		std::fs::create_dir_all(out_dir).expect("Could not create gen directory.");
+		std::fs::create_dir_all(&out_dir).expect("Could not create gen directory.");
 	}
 
+    let pth = out_dir.as_path();
+
     let mut buf_reader = BufReader::new(skyrim);
-    esm::ESMReader::read(args.data_version, &mut buf_reader);
+    esm::ESMReader::read(args.data_version, &mut buf_reader, pth);
 }
