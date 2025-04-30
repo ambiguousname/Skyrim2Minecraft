@@ -129,6 +129,7 @@ impl<'a> ESMReader<'a> {
                 world_bytes_left -= block.total_size;
             }
         });
+        bar.finish();
     }
 
     fn read_subblock(buf : Vec<u8>, info : ESMInfo, subblock : GroupHeader, bar : ProgressBar) {
@@ -141,7 +142,7 @@ impl<'a> ESMReader<'a> {
 
             let (left, c) = ESMReader::read_cell(&mut reader, info, cell).expect("Could not read cell.");
             
-            bar.set_message(format!("{},{}", c.x, c.y));
+            bar.set_message(format!("Cell {},{}", c.x, c.y));
             // Not exactly accurate for going up to 100% (we miss counting a lot of the headers for groups), but the files are so big I think this is okay:
             bar.inc(left as u64);
 
