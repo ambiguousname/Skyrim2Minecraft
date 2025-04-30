@@ -172,29 +172,74 @@ impl<'a> ESMReader<'a> {
             Cursor::new(out)
         };
         
-        let x : i32;
-        let y : i32;
+        let mut x : i32 = i32::MAX;
+        let mut y : i32 = i32::MAX;
 
-        loop {
+        let mut water_height : Option<f32> = None;
+
+        let mut has_water : bool = false;
+
+        let mut bytes_to_read = cell.data_size;
+
+        while bytes_to_read > 0 {
             let field = FieldHeader::read(&mut r, info.version)?;
             // Cell location:
-            if field.ty == "XCLC" {
-                let mut buf : [u8; 4] = [0; 4];
+            match field.ty.as_str() {
+                "XCLC" => {
+                    let mut buf : [u8; 4] = [0; 4];
 
-                r.read_exact(&mut buf)?;
-                x = i32::from_le_bytes(buf);
+                    r.read_exact(&mut buf)?;
+                    x = i32::from_le_bytes(buf);
+    
+                    r.read_exact(&mut buf)?;
+                    y = i32::from_le_bytes(buf);
+                },
+                "DATA" => {
+                    match info.version {
+                        DataVersion::Oblivion => {
+                            let mut flags : [u8; 1] = [0];
+                            r.read_exact(&mut flags)?;
 
-                r.read_exact(&mut buf)?;
-                y = i32::from_le_bytes(buf);
-                break;
-            } else {
-                field.skip_data(&mut r)?;
-                continue;
+                            has_water = (flags[0] & 0x02) == 0x02;
+                        },
+                        DataVersion::Skyrim => {
+                            let mut buf : [u8; 2] = [0; 2];
+
+                            r.read_exact(&mut buf)?;
+                            
+                            let flags = u16::from_le_bytes(buf);
+                            has_water = (flags & 0x0002) == 0x0002;
+                        }
+                    }
+
+                    // Default water height:
+                    if has_water && matches!(info.version, DataVersion::Oblivion) {
+                        water_height = Some(0.0);
+                    }
+                },
+                "XCLW" => {
+                    if has_water {
+                        let mut buf : [u8; 4] = [0; 4];
+
+                        r.read_exact(&mut buf)?;
+                        
+                        water_height = Some(f32::from_le_bytes(buf));
+                    }
+                },
+                _ => {
+                    field.skip_data(&mut r)?;
+                }
             }
+            
+            bytes_to_read -= FieldHeader::header_size(info.version) + (field.size as u32);
         }
-        let total_read = ESMReader::read_cell_refs(reader, info, Cell {x, y}).expect("Could not read cell refs.") + cell.data_size + RecordHeader::header_size(info.version);
+        if x == i32::MAX || y == i32::MAX {
+            panic!("Could not find Cell x or y.");
+        }
+
+        let total_read = ESMReader::read_cell_refs(reader, info, Cell {x, y, water_height}).expect("Could not read cell refs.") + cell.data_size + RecordHeader::header_size(info.version);
         
-        Ok((total_read, Cell{x, y}))
+        Ok((total_read, Cell{x, y, water_height}))
     }
 
     /// Returns bytes read.
@@ -446,7 +491,8 @@ impl DataHeader for FieldHeader {
 #[derive(Clone, Debug)]
 pub struct Cell {
 	pub x : i32,
-	pub y : i32
+	pub y : i32,
+    pub water_height : Option<f32>
 }
 
 #[derive(Debug)]
