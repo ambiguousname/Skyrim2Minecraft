@@ -144,11 +144,19 @@ impl Chunk {
 			let section = if let Some(s) = matching_section {
 				s
 			} else {
-				self.sections.push(Section{
-					y: (curr_y >> 4) as i8,
-					block_states: BlockState::new_from_palette(Self::default_palette()),
-					biomes: Biomes::default()
-				});
+				// Add sections until we hit the target height:
+				let start = self.sections.last().expect("Could not get last section.").y;
+				
+				let start_idx = self.sections.len() - 1;
+				for j in start_idx..next_idx {
+					let y = start + ((j - start_idx) as i8) + 1;
+					
+					self.sections.push(Section{
+						y,
+						block_states: BlockState::new_from_palette(Self::default_palette()),
+						biomes: Biomes::default()
+					});
+				}
 				self.sections.last_mut().unwrap()
 			};
 
