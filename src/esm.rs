@@ -155,7 +155,7 @@ impl<'a> ESMReader<'a> {
         let mut chunk = reader.take(cell.data_size as u64);
 
         // If the cell is compressed:
-        let mut r = if cell.flags & 0x00040000 == 0x00040000 {
+        let (mut r, size) = if cell.flags & 0x00040000 == 0x00040000 {
             let mut buf : [u8; 4] = [0; 4];
             chunk.read_exact(&mut buf)?;
 
@@ -163,13 +163,13 @@ impl<'a> ESMReader<'a> {
         
             let mut out_cell = vec![0; decrypted_size as usize];
         
-            ZlibDecoder::new(chunk).read_to_end(&mut out_cell)?;
+            ZlibDecoder::new(chunk).read_exact(&mut out_cell)?;
         
-            Cursor::new(out_cell)
+            (Cursor::new(out_cell), decrypted_size)
         } else {
             let mut out = Vec::with_capacity(cell.data_size as usize);
             chunk.read_to_end(&mut out)?;
-            Cursor::new(out)
+            (Cursor::new(out), cell.data_size)
         };
         
         let mut x : i32 = i32::MAX;
@@ -179,7 +179,7 @@ impl<'a> ESMReader<'a> {
 
         let mut has_water : bool = false;
 
-        let mut bytes_to_read = cell.data_size;
+        let mut bytes_to_read = size;
 
         while bytes_to_read > 0 {
             let field = FieldHeader::read(&mut r, info.version)?;
@@ -193,6 +193,11 @@ impl<'a> ESMReader<'a> {
     
                     r.read_exact(&mut buf)?;
                     y = i32::from_le_bytes(buf);
+
+                    if matches!(info.version, DataVersion::Skyrim) {
+                        // Read flags about hiding quads that we will probably never care about:
+                        r.read_exact(&mut buf)?;
+                    }
                 },
                 "DATA" => {
                     match info.version {

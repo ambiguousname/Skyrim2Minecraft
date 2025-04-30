@@ -278,16 +278,16 @@ pub fn parse_land(land : Land, out_folder : &Path) {
 		chunk.draw_height(block_x, block_z + 1, start_height, end_height, 2);
 		chunk.draw_height(block_x + 1, block_z + 1, start_height, end_height, 2);
 
-		if let Some(h) = water_height {
-			if h > end_height {
-				// FIXME: Not sure we account for slight block offsets like this, see line 168:
-				let start = end_height + 1.0;
-				chunk.draw_height(block_x, block_z, start, h, 3);
-				chunk.draw_height(block_x + 1, block_z, start, h, 3);
-				chunk.draw_height(block_x, block_z + 1, start, h, 3);
-				chunk.draw_height(block_x + 1, block_z + 1, start, h, 3);
-			}
-		}
+		// if let Some(h) = water_height {
+		// 	if h > end_height {
+		// 		// FIXME: Not sure we account for slight block offsets like this, see line 168:
+		// 		let start = end_height + 1.0;
+		// 		chunk.draw_height(block_x, block_z, start, h, 3);
+		// 		chunk.draw_height(block_x + 1, block_z, start, h, 3);
+		// 		chunk.draw_height(block_x, block_z + 1, start, h, 3);
+		// 		chunk.draw_height(block_x + 1, block_z + 1, start, h, 3);
+		// 	}
+		// }
 	}
 
 	let region_name = format!("r.{curr_region_x}.{curr_region_y}.mca");
