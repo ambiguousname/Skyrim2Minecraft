@@ -25,12 +25,20 @@ fn main() {
 
     let skyrim = File::open(args.file).unwrap();
 
-    // TODO: Customize, this is also set in world_gen
     let out_dir = args.out_path.unwrap_or(PathBuf::from("./region"));
     
 	if !out_dir.exists() {
 		std::fs::create_dir_all(&out_dir).expect("Could not create gen directory.");
 	}
+
+    // Clean out .mca in the target directory, so we don't have weird overlaps with previously written data:
+    for path in std::fs::read_dir(&out_dir).expect(&format!("Could not read directory {:?}", out_dir)) {
+        let p = path.expect(&format!("Could not read directory entry")).path();
+        let extension = p.extension().expect(&format!("Could not get extension of {:?}", p));
+        if extension == "mca" {
+            std::fs::remove_file(&p).expect(&format!("Could not remove file {p:?}."));
+        }
+    }
 
     let pth = out_dir.as_path();
 
