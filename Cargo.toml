@@ -1,6 +1,6 @@
 [package]
 name = "Skyrim2Minecraft"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
@@ -9,3 +9,6 @@ fastnbt = "2.5.0"
 flate2 = "1.0.35"
 indicatif = "0.17.9"
 serde = "1.0.216"
+rayon = "1.10.0"
+file-guard = "0.2.0"
+clap = { version = "4.5.37", features = ["derive"] }

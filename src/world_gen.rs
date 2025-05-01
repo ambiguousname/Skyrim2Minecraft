@@ -1,7 +1,8 @@
-use std::{collections::HashMap, fs::{File, OpenOptions}, path::Path};
+use std::{collections::HashMap, fs::{File, OpenOptions}, hash::Hash, io::Seek, path::Path};
 
 use serde::Serialize;
 
+use file_guard::Lock;
 use crate::esm::Land;
 
 #[derive(Serialize, Debug)]
@@ -128,6 +129,10 @@ impl Chunk {
 			Block{
 				name: "minecraft:stone".into(),
 				properties: HashMap::new()
+			},
+			Block {
+				name: "minecraft:water".into(),
+				properties: HashMap::new()
 			}
 		]
 	}
@@ -136,18 +141,26 @@ impl Chunk {
 		let mut i = start_height;
 		while i < end_height {
 			let curr_y = i as i32;
-			let matching_section = self.sections.iter_mut().find(|s| {
-				s.y == (curr_y >> 4) as i8
-			});
+
+			let next_idx : usize = (((curr_y - MIN_Y) >> 4) as i8).try_into().expect(&format!("Could not convert index {curr_y}."));
+			let matching_section = self.sections.get_mut(next_idx);
 			
-			let section = if matching_section.is_some() {
-				matching_section.unwrap()
+			let section = if let Some(s) = matching_section {
+				s
 			} else {
-				self.sections.push(Section{
-					y: (curr_y >> 4) as i8,
-					block_states: BlockState::new_from_palette(Self::default_palette()),
-					biomes: Biomes::default()
-				});
+				// Add sections until we hit the target height:
+				let start = self.sections.last().expect("Could not get last section.").y;
+				
+				let start_idx = self.sections.len() - 1;
+				for j in start_idx..next_idx {
+					let y = start + ((j - start_idx) as i8) + 1;
+					
+					self.sections.push(Section{
+						y,
+						block_states: BlockState::new_from_palette(Self::default_palette()),
+						biomes: Biomes::default()
+					});
+				}
 				self.sections.last_mut().unwrap()
 			};
 
@@ -185,7 +198,7 @@ impl Default for Chunk {
 	}
 }
 
-pub fn parse_land(land : Land) {
+pub fn parse_land(land : Land, out_folder : &Path) {
 	// Order of operations:
 	// Deduce region ranges and chunk ranges from Cell coordinates.
 	// Write height data to these chunk ranges.
@@ -201,18 +214,6 @@ pub fn parse_land(land : Land) {
 	let curr_region_x = land.cell.x.div_euclid(8);
 	let curr_region_y = land.cell.y.div_euclid(8);
 
-	let region_name = format!("r.{curr_region_x}.{curr_region_y}.mca");
-	let region_path = Path::new(&region_name);
-
-	// Our handy units mean we can only be in one region at a given time:
-	let mut region = if region_path.exists() {
-		let read = OpenOptions::new().read(true).write(true).open(region_path).unwrap();
-		fastanvil::Region::from_stream(read).unwrap()
-	} else {
-		let new_region = File::create_new(region_path).unwrap();
-		fastanvil::Region::new(new_region).unwrap()
-	};
-
 	// Cells are comprised of 4 x 4 chunks, so we skip to the relevant starting chunk.
 	// We need this in chunk coordinates relative to the world origin (0, 0).
 	// Per cubicmetre, -Z is North (and -X is West).
@@ -223,6 +224,9 @@ pub fn parse_land(land : Land) {
 
 	let mut row_offset : f32 = 0.0;
 	let mut curr_offset = land.offset_height;
+
+	// TODO: Is this conversion right?
+	let water_height = land.cell.water_height.map(|h| { h/64.0 });
 
 	for (i, v) in land.height_gradient.iter().enumerate() {
 		let r = i / 33;
@@ -273,9 +277,45 @@ pub fn parse_land(land : Land) {
 		chunk.draw_height(block_x + 1, block_z, start_height, end_height, 2);
 		chunk.draw_height(block_x, block_z + 1, start_height, end_height, 2);
 		chunk.draw_height(block_x + 1, block_z + 1, start_height, end_height, 2);
+
+		// if let Some(h) = water_height {
+		// 	if h > end_height {
+		// 		// FIXME: Not sure we account for slight block offsets like this, see line 168:
+		// 		let start = end_height + 1.0;
+		// 		chunk.draw_height(block_x, block_z, start, h, 3);
+		// 		chunk.draw_height(block_x + 1, block_z, start, h, 3);
+		// 		chunk.draw_height(block_x, block_z + 1, start, h, 3);
+		// 		chunk.draw_height(block_x + 1, block_z + 1, start, h, 3);
+		// 	}
+		// }
 	}
 
-	for c in chunks {
-		region.write_chunk((c.x_pos).rem_euclid(32) as usize, (c.z_pos).rem_euclid(32) as usize, &fastnbt::to_bytes(&c).unwrap()).unwrap();
+	let region_name = format!("r.{curr_region_x}.{curr_region_y}.mca");
+	let region_path = out_folder.join(region_name);
+	
+	let region_exists = region_path.exists();
+
+	let mut file =	if region_exists {
+		OpenOptions::new().read(true).write(true).open(region_path).unwrap()
+	} else {
+		OpenOptions::new().read(true).write(true).create(true).open(region_path).unwrap()
+	};
+
+	
+	let mut lock = file_guard::lock(&mut file, Lock::Exclusive, 0, usize::MAX).expect("Could not lock file.");
+
+	{
+		let f = &mut lock as &mut File;
+		
+		// Our handy units mean we can only be in one region at a given time:
+		let mut region = if region_exists {
+			fastanvil::Region::from_stream(f).unwrap()
+		} else {
+			fastanvil::Region::new(f).unwrap()
+		};
+
+		for c in chunks {
+			region.write_chunk((c.x_pos).rem_euclid(32) as usize, (c.z_pos).rem_euclid(32) as usize, &fastnbt::to_bytes(&c).unwrap()).unwrap();
+		}
 	}
 }
