@@ -227,8 +227,21 @@ impl<'a> ESMReader<'a> {
                         let mut buf : [u8; 4] = [0; 4];
 
                         r.read_exact(&mut buf)?;
+
+                        let h = f32::from_le_bytes(buf);
+                        let h_bytes = u32::from_le_bytes(buf);
                         
-                        water_height = Some(f32::from_le_bytes(buf));
+                        let height = if matches!(info.version, DataVersion::Skyrim) {
+                            if h_bytes == 0x7F7FFFFF || h_bytes == 0x4F7FFFC9 || h_bytes == 0xCF000000 {
+                                None
+                            } else {
+                                Some(h)
+                            }
+                        } else {
+                            Some(h)
+                        };
+                        
+                        water_height = height;
                     }
                 },
                 _ => {
