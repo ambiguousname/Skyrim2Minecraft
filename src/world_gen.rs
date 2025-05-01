@@ -295,14 +295,17 @@ pub fn parse_land(land : Land, out_folder : &Path) {
 	
 	let region_exists = region_path.exists();
 
-	let mut file = OpenOptions::new().read(true).append(true).create(true).open(region_path).unwrap();
+	let mut file =	if region_exists {
+		OpenOptions::new().read(true).write(true).open(region_path).unwrap()
+	} else {
+		OpenOptions::new().read(true).write(true).create(true).open(region_path).unwrap()
+	};
+
 	
 	let mut lock = file_guard::lock(&mut file, Lock::Exclusive, 0, usize::MAX).expect("Could not lock file.");
 
 	{
 		let f = &mut lock as &mut File;
-
-		f.rewind().expect("Could not rewind to start of file.");
 		
 		// Our handy units mean we can only be in one region at a given time:
 		let mut region = if region_exists {
