@@ -6,7 +6,7 @@
 5. Copy the `datapacks` and `region` folders into the root of your [Minecraft Java save](https://minecraft.wiki/w/World).
 6. Note that this program assumes that it can generate blocks anywhere from y-level `-592` to `624`, so you may need to use a datapack to increase the y-limit of the overworld! Or just [download the custom world](https://drive.proton.me/urls/HVWNDC03T0#VKyc404VoD40). 
 
-Please note that this program has only been tested with Skyrim: Special Edition and Oblivion: Game of the Year Edition (2009), it may not work on older versions.
+Please note that this program has only been tested with Skyrim: Special Edition, Oblivion: Game of the Year Edition (2009), and Oblivion: Remastered. It may not work on older versions.
 
 # Possible Improvements
 - Water Height mapping
