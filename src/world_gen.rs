@@ -139,7 +139,7 @@ impl Chunk {
 
 	pub fn draw_height(&mut self, x : usize, z : usize, start_height : f32, end_height : f32, idx : i8) {
 		let mut i = start_height;
-		while i < end_height {
+		while i < end_height.floor() {
 			let curr_y = i as i32;
 
 			let next_idx : usize = (((curr_y - MIN_Y) >> 4) as i8).try_into().expect(&format!("Could not convert index {curr_y}."));
@@ -164,9 +164,11 @@ impl Chunk {
 				self.sections.last_mut().unwrap()
 			};
 
-			let height_draw = std::cmp::min(16, (end_height - i).abs().round_ties_even() as usize);
-			section.block_states.draw_height(idx, x, z, 0, height_draw);
-			i += 16.0;
+			let height_start = curr_y.rem_euclid(16) as usize;
+			let height_draw = std::cmp::min(16 - height_start, (end_height - i).abs().round_ties_even() as usize);
+
+			section.block_states.draw_height(idx, x, z, height_start, height_start + height_draw);
+			i += height_draw as f32;
 		}
 	}
 }
